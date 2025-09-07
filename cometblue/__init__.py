@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from uuid import UUID
 
-from bleak import BleakClient, BleakScanner
+from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
@@ -70,19 +70,15 @@ class CometBlueBleakClient(BleakClientWithServiceCache):
     server_pin: bytearray | None
 
     def __init__(self, *args, **kwargs):
-        # _LOGGER.debug("Initializing client: %s, %s", args, kwargs)
         self.server_pin = kwargs.get("server_pin")
-        # _LOGGER.debug("Pin init: %s", self.server_pin)
         super().__init__(*args, **kwargs)
 
     async def connect(self, **kwargs) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
         # _LOGGER.debug("Connecting to %s", self._backend)
         await super().connect(**kwargs)
-        # _LOGGER.warning("Pin pre-connect: %s", self.server_pin)
         if self.server_pin is not None:
             await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
-            _LOGGER.warning("Pin sent: %s", self.server_pin)
 
 
 class AsyncCometBlue:
