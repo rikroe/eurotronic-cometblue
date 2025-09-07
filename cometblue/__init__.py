@@ -71,8 +71,8 @@ class CometBlueBleakClient(BleakClientWithServiceCache):
 
     def __init__(self, *args, **kwargs):
 
+        self.server_pin = kwargs.pop("server_pin")
         super().__init__(*args, **kwargs)
-        self.server_pin = kwargs.get("server_pin")
         _LOGGER.warning("Pin init: %s", self.server_pin)
 
     async def connect(self, **kwargs) -> None:
@@ -419,6 +419,7 @@ class AsyncCometBlue:
         self.client = await establish_connection(
             CometBlueBleakClient,
             self.device,
+            use_services_cache=False,
             name=self.device.name or self.device.address,
             max_attempts=self.retries,
             timeout=self.timeout,
