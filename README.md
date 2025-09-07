@@ -36,7 +36,7 @@ test this library with another device - let me know your results.
 Just
 
 ```
-pip install eurotronic-cometblue
+pip install eurotronic-cometblue-ha
 ```
 
 ## Usage
@@ -53,7 +53,7 @@ longer or shorter discovery duration.
 | timeout   |    no     | 2             |
 
 ```python
-from cometblue import CometBlue
+from eurotronic_cometblue_ha import CometBlue
 
 blue = CometBlue(mac="00:00:00:00:00:00", pin=123456, timeout=2)
 ```
@@ -61,7 +61,7 @@ blue = CometBlue(mac="00:00:00:00:00:00", pin=123456, timeout=2)
 or
 
 ```python
-from cometblue import AsyncCometBlue
+from eurotronic_cometblue_ha import AsyncCometBlue
 
 blue = AsyncCometBlue(mac="00:00:00:00:00:00", pin=123456, timeout=2)
 ```
@@ -95,7 +95,7 @@ Use `CometBlueAsync` and `[method_name]_async` for asynchronous handling.
 ### Instantiating and retrieving the current temperature
 
 ```python
-from cometblue import CometBlue
+from eurotronic_cometblue_ha import CometBlue
 
 blue = CometBlue("00:00:00:00:00:00", 123456)
 blue.connect()
@@ -107,7 +107,7 @@ blue.disconnect()
 or
 
 ```python
-from cometblue import CometBlue
+from eurotronic_cometblue_ha import CometBlue
 
 with CometBlue("00:00:00:00:00:00", 123456) as blue:
     temp = blue.get_temperature()
