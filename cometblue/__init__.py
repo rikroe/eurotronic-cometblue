@@ -77,6 +77,7 @@ class CometBlueBleakClient(BleakClient):
 
     async def connect(self, **kwargs) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
+        _LOGGER.debug("Connecting to %s", self.address_or_ble_device)
         await self._backend.connect(self._pair_before_connect, **kwargs)
         _LOGGER.warning("Pin pre-connect: %s", self.server_pin)
         if self.server_pin is not None:
@@ -104,6 +105,7 @@ class AsyncCometBlue:
                 raise ValueError(
                     "device must be a valid UUID in the format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX or bleak.BLEDevice."
                 )
+            _LOGGER.debug("Found string device: %s", device)
             device = BLEDevice(device) # pyright: ignore[reportCallIssue]
         if 0 > pin >= 100000000:
             raise ValueError("pin can only consist of digits. Up to 8 digits allowed.")
@@ -416,6 +418,7 @@ class AsyncCometBlue:
 
         :return:
         """
+        _LOGGER.debug("Connecting to %s", self.device)
         self.client = await establish_connection(
             CometBlueBleakClient,
             self.device,
@@ -425,6 +428,9 @@ class AsyncCometBlue:
             timeout=self.timeout,
             server_pin=self.pin,
         )
+        client = CometBlueBleakClient(self.device)
+        await client.connect()
+
         self.connected = True
 
     async def disconnect_async(self):
