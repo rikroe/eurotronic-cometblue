@@ -70,7 +70,7 @@ class CometBlueBleakClient(BleakClient):
     server_pin: bytearray | None
 
     def __init__(self, *args, **kwargs):
-        _LOGGER.debug("Initializing client: %s", args[1])
+        _LOGGER.debug("Initializing client: %s, %s", args, kwargs)
         self.server_pin = kwargs.pop("server_pin")
         _LOGGER.debug("Pin init: %s", self.server_pin)
         super().__init__(*args, **kwargs)
