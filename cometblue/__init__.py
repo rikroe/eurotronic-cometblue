@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from uuid import UUID
 
-from bleak import BleakScanner
+from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
@@ -65,7 +65,7 @@ TEMPERATURE_ALLOWED_RANGE = {
 }
 
 
-class CometBlueBleakClient(BleakClientWithServiceCache):
+class CometBlueBleakClient(BleakClient):
     """Custom Bleak client for Comet Blue devices."""
     server_pin: bytearray | None
 
@@ -419,9 +419,9 @@ class AsyncCometBlue:
         self.client = await establish_connection(
             CometBlueBleakClient,
             self.device,
-            use_services_cache=False,
             name=self.device.name or self.device.address,
             max_attempts=self.retries,
+            use_services_cache=False,
             timeout=self.timeout,
             server_pin=self.pin,
         )
