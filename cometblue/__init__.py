@@ -65,6 +65,23 @@ TEMPERATURE_ALLOWED_RANGE = {
 }
 
 
+class CometBlueBleakClient(BleakClientWithServiceCache):
+    """Custom Bleak client for Comet Blue devices."""
+    server_pin: bytearray | None
+
+    def __init__(self, *args, **kwargs):
+
+        super().__init__(*args, **kwargs)
+        self.server_pin = kwargs.get("server_pin")
+
+    async def connect(self, **kwargs) -> None:
+        """Connect to the CometBlue GATT server and write the PIN characteristic."""
+        await self._backend.connect(self._pair_before_connect, **kwargs)
+
+        if self.server_pin is not None:
+            await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
+
+
 class AsyncCometBlue:
     """Asynchronous adapter for Eurotronic Comet Blue (and rebranded) bluetooth TRV."""
 
@@ -402,7 +419,8 @@ class AsyncCometBlue:
             self.device,
             name=self.device.name or self.device.address,
             max_attempts=self.retries,
-            timeout=self.timeout
+            timeout=self.timeout,
+            server_pin=self.pin,
         )
         self.connected = True
 
