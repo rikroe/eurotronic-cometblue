@@ -417,7 +417,7 @@ class AsyncCometBlue:
         :return:
         """
         self.client = await establish_connection(
-            BleakClientWithServiceCache,
+            CometBlueBleakClient,
             self.device,
             name=self.device.name or self.device.address,
             max_attempts=self.retries,
