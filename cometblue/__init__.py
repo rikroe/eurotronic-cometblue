@@ -74,13 +74,11 @@ class CometBlueBleakClient(BleakClient):
         self.server_pin = kwargs.pop("server_pin")
         _LOGGER.debug("Pin init: %s", self.server_pin)
         super().__init__(*args, **kwargs)
-        _LOGGER.debug("Backend: %s", self._backend)
-        _LOGGER.debug("connect: %s", self.connect)
 
     async def connect(self, **kwargs) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
         _LOGGER.debug("Connecting to %s", self._backend)
-        await self._backend.connect(self._pair_before_connect, **kwargs)
+        await super().connect(**kwargs)
         _LOGGER.warning("Pin pre-connect: %s", self.server_pin)
         if self.server_pin is not None:
             await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
