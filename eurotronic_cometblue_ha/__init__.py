@@ -1,3 +1,5 @@
+"""Python client for Eurotronic GmbH BLE Comet (and rebranded) Radiator TRVs."""
+
 import asyncio
 import platform
 import re
@@ -14,6 +16,8 @@ from bleak_retry_connector import (
 )
 
 from . import const
+
+__version__ = "1.3.1"
 
 MAC_REGEX = re.compile('([0-9A-F]{2}:){5}[0-9A-F]{2}')
 UUID_REGEX = re.compile('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')

@@ -2,7 +2,7 @@ import re
 import unittest
 from datetime import datetime
 
-from cometblue import CometBlue, Weekday
+from eurotronic_cometblue_ha import CometBlue, Weekday
 
 
 class CometBlueTest(unittest.TestCase):

@@ -1,14 +1,15 @@
 # CometBlue
-[![GitHub version](https://badge.fury.io/gh/zero-udo%2Feurotronic-cometblue.svg)](https://badge.fury.io/gh/zero-udo%2Feurotronic-cometblue)
-[![PyPI version](https://badge.fury.io/py/eurotronic-cometblue.svg)](https://badge.fury.io/py/eurotronic-cometblue)
+[![GitHub version](https://badge.fury.io/gh/rikroe%2Feurotronic-cometblue.svg)](https://badge.fury.io/gh/rikroe%2Feurotronic-cometblue)
+[![PyPI version](https://badge.fury.io/py/eurotronic-cometblue-ha.svg)](https://badge.fury.io/py/eurotronic-cometblue-ha)
 
-eurotronic-cometblue is a library to communicate with your Eurotronic GmbH Comet Blue radiator controllers.
+eurotronic-cometblue-ha is a library to communicate with your Eurotronic GmbH Comet Blue radiator controllers.
+
+This library is a fork of [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue) with changes specifically for using it in a [Home Assistant custom component](https://github.com/rikroe/cometblue-custom-component). For changes, see [zero-udo/eurotronic-cometblue#8](https://github.com/zero-udo/eurotronic-cometblue/pull/8).
 
 The device supports up to four programmable schedules for each weekday. Longer periods can be set as holidays. There are
 8 holiday slots available.
 
-This library depends on [bleak](https://github.com/hbldh/bleak) and runs therefore on Linux, Windows and macOS (thanks
-to [rikroe](https://github.com/rikroe)).
+This library is based on the work of [zero-udo](https://github.com/zero-udo). It depends on [bleak](https://github.com/hbldh/bleak) and [bleak-retry-connector](https://github.com/Bluetooth-Devices/bleak-retry-connector) and runs therefore on Linux, Windows and macOS in addition to the Home Assistant component.
 
 ## Compatible devices
 
