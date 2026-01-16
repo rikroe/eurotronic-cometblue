@@ -93,6 +93,8 @@ class AsyncCometBlue:
     retries: int
     client: BleakClientWithServiceCache
 
+    _connection_semaphore = asyncio.Semaphore()
+
     def __init__(self, device: BLEDevice | str, pin=0, timeout=5, retries=10):
         if isinstance(device, str):
             if bool(MAC_REGEX.match(device)) is False and platform.system() != "Darwin":
@@ -646,11 +648,13 @@ class AsyncCometBlue:
         return result
 
     async def __aenter__(self):
+        await self._connection_semaphore.acquire()
         await self.connect_async()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.disconnect_async()
+        self._connection_semaphore.release()
 
     @classmethod
     async def discover_async(cls, timeout=5) -> list[BLEDevice]:
