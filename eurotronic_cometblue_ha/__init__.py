@@ -364,7 +364,7 @@ class AsyncCometBlue:
             values[3] not in range(0, 100)
             or values[2] not in range(1, 13)
             or values[1] not in range(1, 31)
-            or (values[0] not in range(0, 25) or values[0] == 128)
+            or not(values[0] in range(0, 25) or values[0] == 128)
             or values[7] not in range(0, 100)
             or values[6] not in range(1, 13)
             or values[5] not in range(1, 31)
