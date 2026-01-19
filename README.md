@@ -4,12 +4,12 @@
 
 eurotronic-cometblue-ha is a library to communicate with your Eurotronic GmbH Comet Blue radiator controllers.
 
-This library is a fork of [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue) with changes specifically for using it in a [Home Assistant custom component](https://github.com/rikroe/cometblue-custom-component). For changes, see [zero-udo/eurotronic-cometblue#8](https://github.com/zero-udo/eurotronic-cometblue/pull/8).
+> [!NOTE]
+> This library is a fork of [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue) with changes specifically for using it in a [Home Assistant custom component](https://github.com/rikroe/cometblue-custom-component). For changes, see [zero-udo/eurotronic-cometblue#8](https://github.com/zero-udo/eurotronic-cometblue/pull/8).
 
 The device supports up to four programmable schedules for each weekday. Longer periods can be set as holidays. There are
 8 holiday slots available.
-
-This library is based on the work of [zero-udo](https://github.com/zero-udo). It depends on [bleak](https://github.com/hbldh/bleak) and [bleak-retry-connector](https://github.com/Bluetooth-Devices/bleak-retry-connector) and runs therefore on Linux, Windows and macOS in addition to the Home Assistant component.
+It depends on [bleak](https://github.com/hbldh/bleak) and [bleak-retry-connector](https://github.com/Bluetooth-Devices/bleak-retry-connector) and runs therefore on Linux, Windows and macOS in addition to the Home Assistant component.
 
 ## Compatible devices
 
@@ -24,9 +24,6 @@ Comet Blue radiator controllers are sold under different names:
 
 This library should work with all listed radiator controllers, but is only tested with a Sygonix HT100BT which is the
 only one I own.
-
-Thanks to [@FloSchmidt](https://github.com/FloSchmidt)
-for [checking](https://github.com/zero-udo/eurotronic-cometblue/issues/5) the Eurotronic Comet Blue
 
 If your device is not listed here but looks similar (or you know it is a rebranded Comet Blue), or if you are able to
 test this library with another device - let me know your results.
@@ -164,4 +161,6 @@ blue.set_holiday(2, {"start": datetime(2020, 12, 26, 18),
 
 * Thorsten Tränker for his reverse engineering work
   done [here](https://www.torsten-traenkner.de/wissen/smarthome/heizung.php)
-* [rikroe](https://github.com/rikroe) for the switch to bleak
+* [@zero-udo](https://github.com/zero-udo) for the inital library [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue)
+* [@FloSchmidt](https://github.com/FloSchmidt) for [checking](https://github.com/zero-udo/eurotronic-cometblue/issues/5) the Eurotronic Comet Blue
+* [@rikroe](https://github.com/rikroe) for the switch to bleak
