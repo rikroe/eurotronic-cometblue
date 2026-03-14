@@ -87,7 +87,6 @@ class AsyncCometBlue:
     """Asynchronous adapter for Eurotronic Comet Blue (and rebranded) bluetooth TRV."""
 
     device: BLEDevice
-    connected: bool
     pin: bytearray
     timeout: int
     retries: int
@@ -112,7 +111,6 @@ class AsyncCometBlue:
         self.pin = self.transform_pin(pin)
         self.timeout = timeout
         self.retries = retries
-        self.connected = False
 
     async def __read_value(self, characteristic: UUID) -> bytearray:
         """
@@ -364,7 +362,7 @@ class AsyncCometBlue:
             values[3] not in range(0, 100)
             or values[2] not in range(1, 13)
             or values[1] not in range(1, 31)
-            or (values[0] not in range(0, 25) or values[0] == 128)
+            or not(values[0] in range(0, 25) or values[0] == 128)
             or values[7] not in range(0, 100)
             or values[6] not in range(1, 13)
             or values[5] not in range(1, 31)
@@ -410,13 +408,22 @@ class AsyncCometBlue:
 
         return new_value
 
+    @property
+    def connected(self) -> bool:
+        """
+        Returns if the client is currently connected to the device.
+
+        :return: True if connected, False if not
+        """
+        return self.client.is_connected if self.client else False
+
     async def connect_async(self):
         """
         Connects to the device.
 
         :return:
         """
-        _LOGGER.debug("Connecting to %s", self.device)
+        _LOGGER.debug("Connecting to %s with timeout=%s and retries=%s", self.device, self.timeout, self.retries)
         self.client = await establish_connection(
             CometBlueBleakClient,
             self.device,
@@ -427,8 +434,6 @@ class AsyncCometBlue:
             server_pin=self.pin,
         )
 
-        self.connected = True
-
     async def disconnect_async(self):
         """
         Disconnects the device.
@@ -436,7 +441,6 @@ class AsyncCometBlue:
         :return:
         """
         await self.client.disconnect()
-        self.connected = False
 
     async def get_temperature_async(self) -> dict:
         """Retrieves the temperature configurations from the device.
