@@ -3,14 +3,18 @@
 import asyncio
 import platform
 import re
+from collections.abc import Buffer
 from datetime import datetime
 from enum import Enum
 from logging import getLogger
+from typing import Any
 from uuid import UUID
 
 from bleak import BleakScanner
+from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
+    BLEAK_TIMEOUT,
     BleakClientWithServiceCache,
     establish_connection,
 )
@@ -69,18 +73,39 @@ TEMPERATURE_ALLOWED_RANGE = {
 
 class CometBlueBleakClient(BleakClientWithServiceCache):
     """Custom Bleak client for Comet Blue devices."""
-    server_pin: bytearray | None
+    server_pin: bytearray
 
     def __init__(self, *args, **kwargs):
-        self.server_pin = kwargs.get("server_pin")
+        if "server_pin" not in kwargs or not isinstance(kwargs["server_pin"], bytearray):
+            raise ValueError("server_pin is required for CometBlueBleakClient and must be a bytearray.")
+        self.server_pin = kwargs["server_pin"]
         super().__init__(*args, **kwargs)
 
     async def connect(self, **kwargs) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
         # _LOGGER.debug("Connecting to %s", self._backend)
         await super().connect(**kwargs)
-        if self.server_pin is not None:
-            await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
+        await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
+
+    async def read_gatt_char(
+        self,
+        char_specifier: BleakGATTCharacteristic | int | str | UUID,
+        **kwargs: Any,
+    ) -> bytearray:
+        """Read a GATT characteristic with a timeout and return the value as a bytearray."""
+        async with asyncio.timeout(BLEAK_TIMEOUT):
+            value = await super().read_gatt_char(char_specifier, **kwargs)
+            return bytearray(value)
+
+    async def write_gatt_char(
+        self,
+        char_specifier: BleakGATTCharacteristic | int | str | UUID,
+        data: Buffer,
+        response: bool | None = None,
+    ) -> None:
+        """Write a GATT characteristic with a timeout."""
+        async with asyncio.timeout(BLEAK_TIMEOUT):
+            await super().write_gatt_char(char_specifier, data, response=response)
 
 
 class AsyncCometBlue:
@@ -88,11 +113,9 @@ class AsyncCometBlue:
 
     device: BLEDevice
     pin: bytearray
-    timeout: int
-    retries: int
     client: BleakClientWithServiceCache
 
-    def __init__(self, device: BLEDevice | str, pin=0, timeout=5, retries=10):
+    def __init__(self, device: BLEDevice | str, pin=0):
         if isinstance(device, str):
             if bool(MAC_REGEX.match(device)) is False and platform.system() != "Darwin":
                 raise ValueError(
@@ -104,17 +127,16 @@ class AsyncCometBlue:
                 )
             _LOGGER.debug("Found string device: %s", device)
             device = BLEDevice(device) # pyright: ignore[reportCallIssue]
-        if 0 > pin >= 100000000:
-            raise ValueError("pin can only consist of digits. Up to 8 digits allowed.")
+        if 0 > pin >= 1000000:
+            raise ValueError("Pin can only consist of digits. Up to 6 digits allowed.")
 
         self.device = device
         self.pin = self.transform_pin(pin)
-        self.timeout = timeout
-        self.retries = retries
+
 
     async def __read_value(self, characteristic: UUID) -> bytearray:
         """
-        Reads a characteristic and provides the data as a bytearray. Disconnects afterwards.
+        Reads a characteristic and provides the data as a bytearray.
 
         :param characteristic: UUID of the characteristic to read
         :return: bytearray containing the read values
@@ -124,7 +146,7 @@ class AsyncCometBlue:
 
     async def __write_value(self, characteristic: UUID, new_value: bytearray):
         """
-        Writes a bytearray to the specified characteristic. Disconnects afterwards to apply written changes.
+        Writes a bytearray to the specified characteristic.
 
         :param characteristic: UUID of the characteristic to write
         :param new_value: bytearray containing the new values
@@ -419,18 +441,16 @@ class AsyncCometBlue:
 
     async def connect_async(self):
         """
-        Connects to the device.
+        Connects to the device using BleakRetryConnector.
 
         :return:
         """
-        _LOGGER.debug("Connecting to %s with timeout=%s and retries=%s", self.device, self.timeout, self.retries)
+        _LOGGER.debug("Connecting to %s", self.device)
         self.client = await establish_connection(
             CometBlueBleakClient,
             self.device,
             name=self.device.name or self.device.address,
-            max_attempts=self.retries,
             use_services_cache=False,
-            timeout=self.timeout,
             server_pin=self.pin,
         )
 
@@ -692,8 +712,7 @@ class CometBlue(AsyncCometBlue):
 
     def connect(self):
         """
-        Connects to the device. Increases connection-timeout if connection could not be established up to twice the
-        initial timeout. Max 10 retries.
+        Connects to the device using BleakRetryConnector.
 
         :return:
         """
