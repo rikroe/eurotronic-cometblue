@@ -462,6 +462,18 @@ class AsyncCometBlue:
         """
         await self.client.disconnect()
 
+    async def get_device_info_async(self) -> dict:
+        """
+        Retrieves the device information characteristics.
+
+        :return: dict of the retrieved values
+        """
+        return {
+            "model": (await self.__read_value(const.CHARACTERISTIC_MODEL)).decode(),
+            "version": (await self.__read_value(const.CHARACTERISTIC_VERSION)).decode(),
+            "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode()
+        }
+
     async def get_temperature_async(self) -> dict:
         """Retrieves the temperature configurations from the device.
 
@@ -725,6 +737,14 @@ class CometBlue(AsyncCometBlue):
         :return:
         """
         self.__run_in_loop(self.disconnect_async())
+
+    def get_device_info(self) -> dict:
+        """
+        Retrieves the device information characteristics.
+
+        :return: dict of the retrieved values
+        """
+        return self.__run_in_loop(self.get_device_info_async())
 
     def get_temperature(self) -> dict:
         """Retrieves the temperature configurations from the device.
