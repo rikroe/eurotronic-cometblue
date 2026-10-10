@@ -157,6 +157,11 @@ blue.set_holiday(2, {"start": datetime(2020, 12, 26, 18),
                      "temperature": 16.5})
 ```
 
+## Development and tests
+
+See [tests/README.md](tests/README.md) for setup, running tests in the project's default
+virtual environment, and using the shared BLE mocks.
+
 ## Credits:
 
 * Thorsten Tränker for his reverse engineering work

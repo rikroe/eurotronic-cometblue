@@ -38,8 +38,18 @@ Source = "https://github.com/rikroe/eurotronic-cometblue"
 
 [dependency-groups]
 dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
     "ruff>=0.12.12",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py310"
