@@ -13,6 +13,7 @@ from uuid import UUID
 from bleak import BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakDeviceNotFoundError, BleakError
 from bleak_retry_connector import (
     BLEAK_TIMEOUT,
     BleakClientWithServiceCache,
@@ -21,7 +22,7 @@ from bleak_retry_connector import (
 
 from . import const
 
-MAC_REGEX = re.compile("([0-9A-F]{2}:){5}[0-9A-F]{2}")
+MAC_REGEX = re.compile("([0-9A-F]{2}:){5}[0-9A-F]{2}", re.IGNORECASE)
 UUID_REGEX = re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 _LOGGER = getLogger(__name__)
@@ -84,9 +85,17 @@ class CometBlueBleakClient(BleakClientWithServiceCache):
 
     async def connect(self, **kwargs) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
-        # _LOGGER.debug("Connecting to %s", self._backend)
-        await super().connect(**kwargs)
-        await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
+        try:
+            await super().connect(**kwargs)
+            await self.write_gatt_char(const.CHARACTERISTIC_PIN, self.server_pin, response=True)
+        except BaseException:
+            if self.is_connected:
+                try:
+                    async with asyncio.timeout(BLEAK_TIMEOUT):
+                        await self.disconnect()
+                except Exception:
+                    _LOGGER.debug("Disconnect after connection failure failed", exc_info=True)
+            raise
 
     async def read_gatt_char(
         self,
@@ -112,27 +121,33 @@ class CometBlueBleakClient(BleakClientWithServiceCache):
 class AsyncCometBlue:
     """Asynchronous adapter for Eurotronic Comet Blue (and rebranded) bluetooth TRV."""
 
-    device: BLEDevice
+    device: BLEDevice | str
     pin: bytearray
-    client: BleakClientWithServiceCache
+    client: BleakClientWithServiceCache | None
 
     def __init__(self, device: BLEDevice | str, pin=0):
         if isinstance(device, str):
-            if bool(MAC_REGEX.match(device)) is False and platform.system() != "Darwin":
+            if MAC_REGEX.fullmatch(device) is None and platform.system() != "Darwin":
                 raise ValueError(
                     "device must be a valid Bluetooth Address in the format XX:XX:XX:XX:XX:XX or a bleak.BLEDevice."
                 )
-            if bool(UUID_REGEX.match(device)) is False and platform.system() == "Darwin":
+            if UUID_REGEX.fullmatch(device) is None and platform.system() == "Darwin":
                 raise ValueError(
                     "device must be a valid UUID in the format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX or bleak.BLEDevice."
                 )
             _LOGGER.debug("Found string device: %s", device)
-            device = BLEDevice(device)  # pyright: ignore[reportCallIssue]
-        if 0 > pin >= 1000000:
+        if not isinstance(pin, int) or not 0 <= pin < 1000000:
             raise ValueError("Pin can only consist of digits. Up to 6 digits allowed.")
 
         self.device = device
         self.pin = self.transform_pin(pin)
+        self.client = None
+        self.__session_lock = asyncio.Lock()
+        self.__session_owner: asyncio.Task[Any] | None = None
+
+    def __check_session_owner(self) -> None:
+        if self.__session_owner is not None and self.__session_owner is not asyncio.current_task():
+            raise BleakError("Device connection is in use by another task")
 
     async def __read_value(self, characteristic: UUID) -> bytearray:
         """
@@ -141,6 +156,9 @@ class AsyncCometBlue:
         :param characteristic: UUID of the characteristic to read
         :return: bytearray containing the read values
         """
+        self.__check_session_owner()
+        if self.client is None or not self.client.is_connected:
+            raise BleakError("Device is not connected")
         value = await self.client.read_gatt_char(characteristic)
         return value
 
@@ -152,6 +170,9 @@ class AsyncCometBlue:
         :param new_value: bytearray containing the new values
         :return:
         """
+        self.__check_session_owner()
+        if self.client is None or not self.client.is_connected:
+            raise BleakError("Device is not connected")
         await self.client.write_gatt_char(characteristic, new_value, response=True)
 
     @staticmethod
@@ -451,6 +472,14 @@ class AsyncCometBlue:
 
         :return:
         """
+        self.__check_session_owner()
+        if self.connected:
+            return
+        if isinstance(self.device, str):
+            device = await BleakScanner.find_device_by_address(self.device, timeout=BLEAK_TIMEOUT)
+            if device is None:
+                raise BleakDeviceNotFoundError(self.device, f"Device {self.device} was not found")
+            self.device = device
         _LOGGER.debug("Connecting to %s", self.device)
         self.client = await establish_connection(
             CometBlueBleakClient,
@@ -466,7 +495,10 @@ class AsyncCometBlue:
 
         :return:
         """
-        await self.client.disconnect()
+        self.__check_session_owner()
+        if self.client is not None and self.client.is_connected:
+            async with asyncio.timeout(BLEAK_TIMEOUT):
+                await self.client.disconnect()
 
     async def get_device_info_async(self) -> dict:
         """
@@ -694,11 +726,28 @@ class AsyncCometBlue:
         return result
 
     async def __aenter__(self):
-        await self.connect_async()
+        if self.__session_owner is asyncio.current_task():
+            raise BleakError("Nested connection contexts are not supported")
+        await self.__session_lock.acquire()
+        self.__session_owner = asyncio.current_task()
+        try:
+            await self.connect_async()
+        except BaseException:
+            self.__session_owner = None
+            self.__session_lock.release()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.disconnect_async()
+        try:
+            await self.disconnect_async()
+        except Exception:
+            if exc_type is None:
+                raise
+            _LOGGER.debug("Disconnect during error cleanup failed", exc_info=True)
+        finally:
+            self.__session_owner = None
+            self.__session_lock.release()
 
     @classmethod
     async def discover_async(cls, timeout=5) -> list[BLEDevice]:

@@ -42,8 +42,15 @@ The client is async-only. Use `AsyncCometBlue` with a `BLEDevice` returned by Bl
 discovery and an optional `pin` (default `0`). Discovery timeouts belong to the scan,
 not the client constructor.
 
+An address string is resolved during `connect_async()` using the existing BLE timeout;
+a supplied `BLEDevice` is used directly without scanning.
+
 All device operations must be awaited. Use `async with` to connect and disconnect
 automatically, or explicitly await `connect_async()` and `disconnect_async()`.
+
+Connection contexts on the same instance are serialized. Callers
+using explicit connect/disconnect calls must serialize their own sessions. Retry delays
+and refresh scheduling remain the caller's responsibility.
 
 | Method | Parameters | Return Value |
 |--------|------------|--------------|

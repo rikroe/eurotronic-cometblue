@@ -3,13 +3,13 @@
 import asyncio
 from datetime import datetime
 from inspect import iscoroutinefunction
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call
 from uuid import UUID
 
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bleak.exc import BleakCharacteristicNotFoundError, BleakError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakDeviceNotFoundError, BleakError
 
 import eurotronic_cometblue_ha as cometblue
 from eurotronic_cometblue_ha import AsyncCometBlue, CometBlueBleakClient, InvalidByteValueError, Weekday, const
@@ -53,6 +53,10 @@ async def test_connect_and_disconnect(
     blue = AsyncCometBlue(device, pin=123456)
 
     assert blue.device is device
+    assert blue.connected is False
+    assert await blue.disconnect_async() is None
+    gatt_client.disconnect.assert_not_awaited()
+    assert await blue.connect_async() is None
     assert await blue.connect_async() is None
     connector.assert_awaited_once_with(
         CometBlueBleakClient,
@@ -64,8 +68,73 @@ async def test_connect_and_disconnect(
     assert blue.connected is True
 
     assert await blue.disconnect_async() is None
+    assert await blue.disconnect_async() is None
     gatt_client.disconnect.assert_awaited_once_with()
     assert blue.connected is False
+    assert blue.client is gatt_client
+
+
+@pytest.mark.parametrize("pin", [-1, 1000000])
+async def test_invalid_pin(device: BLEDevice, pin: int) -> None:
+    """Reject PINs outside the six-digit range during construction."""
+    with pytest.raises(ValueError, match="Pin"):
+        AsyncCometBlue(device, pin=pin)
+
+
+@pytest.mark.parametrize(
+    ("address", "system"),
+    [("aa:bb:cc:dd:ee:ff", "Linux"), ("01234567-89ab-cdef-0123-456789abcdef", "Darwin")],
+)
+@pytest.mark.parametrize("found", [False, True])
+async def test_address_lookup_on_connect(
+    device: BLEDevice,
+    gatt_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    address: str,
+    system: str,
+    found: bool,
+) -> None:
+    """Resolve string addresses lazily and report missing devices without connecting."""
+    monkeypatch.setattr(cometblue.platform, "system", lambda: system)
+    finder = AsyncMock(return_value=device if found else None)
+    connector = AsyncMock(return_value=gatt_client)
+    monkeypatch.setattr(cometblue.BleakScanner, "find_device_by_address", finder)
+    monkeypatch.setattr(cometblue, "establish_connection", connector)
+    blue = AsyncCometBlue(address)
+    finder.assert_not_awaited()
+
+    if found:
+        await blue.connect_async()
+        assert blue.device is device
+        assert connector.call_args.args[1] is device
+        await blue.connect_async()
+        connector.assert_awaited_once()
+    else:
+        with pytest.raises(BleakDeviceNotFoundError):
+            await blue.connect_async()
+        connector.assert_not_awaited()
+    finder.assert_awaited_once_with(address, timeout=cometblue.BLEAK_TIMEOUT)
+
+
+@pytest.mark.parametrize(
+    ("address", "system"),
+    [("AA:BB:CC:DD:EE:FF-extra", "Linux"), ("01234567-89ab-cdef-0123-456789abcdef-extra", "Darwin")],
+)
+async def test_address_must_match_completely(monkeypatch: pytest.MonkeyPatch, address: str, system: str) -> None:
+    """Reject addresses with valid prefixes but invalid trailing characters."""
+    monkeypatch.setattr(cometblue.platform, "system", lambda: system)
+    with pytest.raises(ValueError, match="device must"):
+        AsyncCometBlue(address)
+
+
+@pytest.mark.parametrize("method", ["get_battery_async", "set_manual_mode_async"])
+async def test_disconnected_io(device: BLEDevice, method: str) -> None:
+    """Report disconnected I/O as a transport error, not a missing attribute."""
+    blue = AsyncCometBlue(device)
+    args = (True,) if method == "set_manual_mode_async" else ()
+    with pytest.raises(BleakError, match="not connected"):
+        await getattr(blue, method)(*args)
 
 
 async def test_async_context_manager(
@@ -85,19 +154,160 @@ async def test_async_context_manager(
     gatt_client.disconnect.assert_awaited_once_with()
 
 
+@pytest.mark.parametrize("error", [RuntimeError("body failed"), TimeoutError(), asyncio.CancelledError()])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_context_disconnects_on_body_error(
-    device: BLEDevice, gatt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    device: BLEDevice,
+    gatt_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+    cleanup_fails: bool,
 ) -> None:
-    """Disconnect when the context body raises without suppressing its error."""
+    """Preserve body errors and cancellation even when disconnect also fails."""
     monkeypatch.setattr(cometblue, "establish_connection", AsyncMock(return_value=gatt_client))
-    error = RuntimeError("body failed")
+    if cleanup_fails:
+        gatt_client.disconnect.side_effect = BleakError("cleanup failed")
 
-    with pytest.raises(RuntimeError) as raised:
+    with pytest.raises(type(error)) as raised:
         async with AsyncCometBlue(device):
             raise error
 
     assert raised.value is error
     gatt_client.disconnect.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+async def test_contexts_are_serialized(
+    writable_blue: AsyncCometBlue, gatt_client: MagicMock, cancel_waiter: bool
+) -> None:
+    """Keep a second context from entering or disconnecting the first context's connection."""
+    attempting = asyncio.Event()
+    entered = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def second_context() -> None:
+        """Signal when another task attempts and then acquires a connection session."""
+        attempting.set()
+        async with writable_blue:
+            entered.set()
+            await finish.wait()
+
+    async with asyncio.timeout(1), asyncio.TaskGroup() as tasks:
+        async with writable_blue:
+            waiter = tasks.create_task(second_context())
+            await attempting.wait()
+            assert not entered.is_set()
+            gatt_client.disconnect.assert_not_awaited()
+            if cancel_waiter:
+                waiter.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+                assert await writable_blue.get_battery_async() == 80
+        if cancel_waiter:
+            async with writable_blue:
+                assert writable_blue.connected
+        else:
+            await entered.wait()
+            assert writable_blue.connected
+            finish.set()
+
+    assert gatt_client.disconnect.await_count == 2
+
+
+async def test_nested_context_rejected(writable_blue: AsyncCometBlue) -> None:
+    """Reject same-task nesting rather than deadlock or disconnect the outer session."""
+    async with asyncio.timeout(1), writable_blue:
+        with pytest.raises(BleakError, match="Nested"):
+            async with writable_blue:
+                pytest.fail("Nested context should not enter")
+        assert writable_blue.connected
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [("connect_async", ()), ("disconnect_async", ()), ("get_battery_async", ()), ("set_manual_mode_async", (True,))],
+)
+async def test_other_task_cannot_use_session(
+    writable_blue: AsyncCometBlue, method: str, args: tuple[object, ...]
+) -> None:
+    """Prevent direct calls from interfering with another task's connection context."""
+    async with writable_blue:
+        with pytest.raises(BleakError, match="another task"):
+            await asyncio.create_task(getattr(writable_blue, method)(*args))
+        assert writable_blue.connected
+
+
+async def test_disconnect_timeout_releases_session(
+    writable_blue: AsyncCometBlue, gatt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bound an unresponsive disconnect and permit a subsequent context to run."""
+    monkeypatch.setattr(cometblue, "BLEAK_TIMEOUT", 0)
+    disconnect = gatt_client.disconnect.side_effect
+    gatt_client.disconnect.side_effect = asyncio.Event().wait
+    with pytest.raises(TimeoutError):
+        async with writable_blue:
+            pass
+    gatt_client.disconnect.side_effect = disconnect
+    async with asyncio.timeout(1), writable_blue:
+        assert writable_blue.connected
+
+
+@pytest.mark.parametrize("error", [BleakError("connect failed"), asyncio.CancelledError()])
+async def test_failed_context_entry_can_be_retried(
+    device: BLEDevice, gatt_client: MagicMock, monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    """Release session ownership after failed or cancelled entry without adding retries."""
+    connector = AsyncMock(side_effect=error)
+    monkeypatch.setattr(cometblue, "establish_connection", connector)
+    blue = AsyncCometBlue(device)
+    with pytest.raises(type(error)) as raised:
+        async with blue:
+            pytest.fail("Connection should not succeed")
+    assert raised.value is error
+    connector.assert_awaited_once()
+
+    connector.side_effect = None
+    connector.return_value = gatt_client
+    async with asyncio.timeout(1), blue:
+        assert blue.connected
+
+
+async def test_context_disconnect_failure_is_propagated(writable_blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Report a disconnect failure when no body error exists, and release the session."""
+    disconnect = gatt_client.disconnect.side_effect
+    error = BleakError("disconnect failed")
+    gatt_client.disconnect.side_effect = error
+    with pytest.raises(BleakError) as raised:
+        async with writable_blue:
+            pass
+    assert raised.value is error
+
+    gatt_client.disconnect.side_effect = disconnect
+    async with asyncio.timeout(1), writable_blue:
+        assert writable_blue.connected
+
+
+@pytest.mark.parametrize("error", [TimeoutError("PIN timed out"), asyncio.CancelledError()])
+async def test_pin_failure_disconnects(
+    device: BLEDevice, monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    """Clean up a connected transport after PIN failure while preserving the original error."""
+    connect = AsyncMock()
+    write = AsyncMock(side_effect=error)
+    disconnect = AsyncMock(side_effect=BleakError("cleanup failed"))
+    monkeypatch.setattr(cometblue.BleakClientWithServiceCache, "__init__", MagicMock(return_value=None))
+    monkeypatch.setattr(cometblue.BleakClientWithServiceCache, "connect", connect)
+    monkeypatch.setattr(CometBlueBleakClient, "write_gatt_char", write)
+    monkeypatch.setattr(CometBlueBleakClient, "disconnect", disconnect)
+    monkeypatch.setattr(CometBlueBleakClient, "is_connected", PropertyMock(return_value=True))
+    client = CometBlueBleakClient(device, server_pin=AsyncCometBlue.transform_pin(123456))
+
+    with pytest.raises(type(error)) as raised:
+        await client.connect()
+    assert raised.value is error
+    connect.assert_awaited_once()
+    write.assert_awaited_once_with(const.CHARACTERISTIC_PIN, client.server_pin, response=True)
+    disconnect.assert_awaited_once()
 
 
 @pytest.mark.parametrize(("raw_offset", "expected_offset"), [(0, 0.0), (3, 1.5), (253, -1.5)])
@@ -512,6 +722,7 @@ async def test_writable_function_round_trip(
     """Echo each command without committing until disconnect, then read back the applied state."""
     write = getattr(writable_blue, setter)
     read = getattr(writable_blue, getter)
+    assert writable_blue.client is not None
     original = {characteristic: bytearray(value) for characteristic, value in device_values.items()}
 
     assert await write(*write_args) is None
@@ -535,6 +746,7 @@ async def test_writable_function_round_trip(
 
 async def test_temperature_write_echo_before_reconnect(writable_blue: AsyncCometBlue) -> None:
     """Model the observed command echo and complete temperature readback after reconnect."""
+    assert writable_blue.client is not None
     original = await writable_blue.get_temperature_async()
     await writable_blue.set_temperature_async({"manualTemp": 18.0})
     expected_command = bytearray([128, 36, 128, 128, 128, 128, 128])
@@ -569,6 +781,7 @@ async def test_mock_preserves_consecutive_partial_writes(
 
 async def test_mock_read_returns_detached_bytes(writable_blue: AsyncCometBlue) -> None:
     """Keep device state intact when a caller mutates a mock read response."""
+    assert writable_blue.client is not None
     result = await writable_blue.client.read_gatt_char(const.CHARACTERISTIC_BATTERY)
     result[0] = 0
 
@@ -577,6 +790,7 @@ async def test_mock_read_returns_detached_bytes(writable_blue: AsyncCometBlue) -
 
 async def test_mock_rejects_read_only_writes(writable_blue: AsyncCometBlue) -> None:
     """Reject writes to read-only characteristics without changing their stored values."""
+    assert writable_blue.client is not None
     with pytest.raises(BleakCharacteristicNotFoundError):
         await writable_blue.client.write_gatt_char(const.CHARACTERISTIC_BATTERY, bytearray([0]), response=True)
 
