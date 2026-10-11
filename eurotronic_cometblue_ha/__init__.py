@@ -3,11 +3,12 @@
 import asyncio
 import platform
 import re
-from collections.abc import Buffer
+from collections.abc import Buffer, Mapping
 from datetime import datetime
 from enum import Enum
 from logging import getLogger
-from typing import Any
+from types import TracebackType
+from typing import Any, TypedDict, cast
 from uuid import UUID
 
 from bleak import BleakScanner
@@ -30,6 +31,34 @@ _LOGGER = getLogger(__name__)
 
 class InvalidByteValueError(ValueError):
     """Raised when a byte value is not in the expected range."""
+
+
+class DeviceInfo(TypedDict):
+    """Device identification fields returned by the client."""
+
+    model: str
+    version: str
+    manufacturer: str
+
+
+class TemperatureValues(TypedDict):
+    """Decoded temperatures and window-detection settings."""
+
+    currentTemp: float
+    manualTemp: float
+    targetTempLow: float
+    targetTempHigh: float
+    tempOffset: float
+    windowOpen: bool
+    windowOpenMinutes: int
+
+
+class HolidayValues(TypedDict, total=False):
+    """Holiday fields; writes require all fields and a datetime start."""
+
+    start: datetime | None
+    end: datetime
+    temperature: float
 
 
 class Weekday(Enum):
@@ -63,7 +92,7 @@ HOLIDAY = {
     8: const.CHARACTERISTIC_HOLIDAY_8,
 }
 
-TEMPERATURE_ALLOWED_RANGE = {
+TEMPERATURE_ALLOWED_RANGE: Mapping[str, tuple[float, float]] = {
     "currentTemp": (0, 50),
     "manualTemp": (7.5, 28.5),
     "targetTempLow": (7.5, 28.5),
@@ -77,13 +106,13 @@ class CometBlueBleakClient(BleakClientWithServiceCache):
 
     server_pin: bytearray
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         if "server_pin" not in kwargs or not isinstance(kwargs["server_pin"], bytearray):
             raise ValueError("server_pin is required for CometBlueBleakClient and must be a bytearray.")
         self.server_pin = kwargs["server_pin"]
         super().__init__(*args, **kwargs)
 
-    async def connect(self, **kwargs) -> None:
+    async def connect(self, **kwargs: Any) -> None:
         """Connect to the CometBlue GATT server and write the PIN characteristic."""
         try:
             await super().connect(**kwargs)
@@ -125,7 +154,7 @@ class AsyncCometBlue:
     pin: bytearray
     client: BleakClientWithServiceCache | None
 
-    def __init__(self, device: BLEDevice | str, pin=0):
+    def __init__(self, device: BLEDevice | str, pin: int = 0) -> None:
         if isinstance(device, str):
             if MAC_REGEX.fullmatch(device) is None and platform.system() != "Darwin":
                 raise ValueError(
@@ -169,7 +198,7 @@ class AsyncCometBlue:
         self.__raw[characteristic] = bytes(value)
         return value
 
-    async def __write_value(self, characteristic: UUID, new_value: bytearray):
+    async def __write_value(self, characteristic: UUID, new_value: bytearray) -> None:
         """
         Writes a bytearray to the specified characteristic.
 
@@ -183,7 +212,7 @@ class AsyncCometBlue:
         await self.client.write_gatt_char(characteristic, new_value, response=True)
 
     @staticmethod
-    def transform_pin(pin: int):
+    def transform_pin(pin: int) -> bytearray:
         """
         Transforms the pin a bytearray required by the Comet Blue device.
 
@@ -232,7 +261,7 @@ class AsyncCometBlue:
         return hour + minutes
 
     @staticmethod
-    def _decode_temperature(value: bytes | bytearray) -> dict:
+    def _decode_temperature(value: bytes | bytearray) -> TemperatureValues:
         """
         Transforms a temperature response to a dictionary containing the values.
 
@@ -241,7 +270,7 @@ class AsyncCometBlue:
         """
         if len(value) < 7:
             raise InvalidByteValueError(f"Invalid temperature received: {value!r}")
-        result = {}
+        result: dict[str, float] = {}
         result["currentTemp"] = value[0] / 2
         result["manualTemp"] = value[1] / 2
         result["targetTempLow"] = value[2] / 2
@@ -253,14 +282,14 @@ class AsyncCometBlue:
         result["windowOpen"] = value[5] == 0xF0
         result["windowOpenMinutes"] = value[6]
 
-        for k, v in TEMPERATURE_ALLOWED_RANGE.items():
-            if not v[0] <= result[k] <= v[1]:
+        for name, (minimum, maximum) in TEMPERATURE_ALLOWED_RANGE.items():
+            if not minimum <= result[name] <= maximum:
                 raise InvalidByteValueError(f"Invalid temperature received: {value!r}")
 
-        return result
+        return cast(TemperatureValues, result)
 
     @staticmethod
-    def _encode_temperature(values: dict[str, float]) -> bytearray:
+    def _encode_temperature(values: dict[str, float] | TemperatureValues) -> bytearray:
         """
         Transforms a temperature dictionary to a bytearray to be transferred to the device.
         Valid dictionary entries are [manualTemp, targetTempLow, targetTempHigh, tempOffset].
@@ -271,11 +300,14 @@ class AsyncCometBlue:
         new_value = bytearray(7)
         new_value[0] = const.UNCHANGED_VALUE
 
-        temp_index = {"manualTemp": 1, "targetTempLow": 2, "targetTempHigh": 3}
-
+        temp_index: Mapping[str, int] = {
+            "manualTemp": 1,
+            "targetTempLow": 2,
+            "targetTempHigh": 3,
+        }
         for key, index in temp_index.items():
             temperature = values.get(key)
-            if temperature is None:
+            if temperature is None or not isinstance(temperature, (int, float)):
                 new_value[index] = const.UNCHANGED_VALUE
                 continue
             if not 7.5 <= temperature <= 28.5:
@@ -284,8 +316,8 @@ class AsyncCometBlue:
 
         if values.get("tempOffset") is not None:
             offset_value = values["tempOffset"]
-            if not -5 <= values["tempOffset"] <= 5:
-                raise ValueError(f"Invalid tempOffset: {values['tempOffset']}")
+            if not -5 <= offset_value <= 5:
+                raise ValueError(f"Invalid tempOffset: {offset_value}")
             offset_value *= 2
             if offset_value < 0:
                 offset_value = 256 + offset_value
@@ -335,7 +367,7 @@ class AsyncCometBlue:
         return new_value
 
     @classmethod
-    def _decode_weekday(cls, value: bytes | bytearray) -> dict:
+    def _decode_weekday(cls, value: bytes | bytearray) -> dict[str, str]:
         """
         Transforms a weekday response to a dictionary containing all non-empty start and end times.
 
@@ -358,7 +390,7 @@ class AsyncCometBlue:
                 result[str.format("end{}", slot)] = end
         return result
 
-    def _encode_weekday(self, values: dict) -> bytearray:
+    def _encode_weekday(self, values: dict[str, str]) -> bytearray:
         """
         Transforms a dictionary containing start1-4 and end1-4 times to a bytearray used by the device.
         Resets all unused time-"slots".
@@ -392,7 +424,7 @@ class AsyncCometBlue:
         return new_value_bytes
 
     @staticmethod
-    def _decode_holiday(values: bytes | bytearray) -> dict:
+    def _decode_holiday(values: bytes | bytearray) -> HolidayValues:
         """
         Transforms a retrieved holiday response to a dictionary containing start and end `datetime`s as well as the set
         temperature. If start is None, vacation mode is active.
@@ -429,12 +461,12 @@ class AsyncCometBlue:
         except ValueError as ex:
             raise InvalidByteValueError(f"Invalid holiday received: {values!r}") from ex
         temperature = values[8] / 2
-        result = {"start": start, "end": end, "temperature": temperature}
+        result: HolidayValues = {"start": start, "end": end, "temperature": temperature}
 
         return result
 
     @staticmethod
-    def _encode_holiday(values: dict) -> bytearray:
+    def _encode_holiday(values: HolidayValues) -> bytearray:
         """
         Transforms a dictionary containing start: datetime, end: datetime as well as temperature: float to a bytearray
         to be transferred to the device.
@@ -445,8 +477,8 @@ class AsyncCometBlue:
         if set(values) != {"start", "end", "temperature"}:
             raise ValueError("start, end and temperature are required")
 
-        start: datetime = values["start"]
-        end: datetime = values["end"]
+        start = values["start"]
+        end = values["end"]
         if not isinstance(start, datetime) or not isinstance(end, datetime):
             raise ValueError("start and end must be datetime values")
         temperature = float(values["temperature"])
@@ -474,7 +506,7 @@ class AsyncCometBlue:
         """
         return self.client.is_connected if self.client else False
 
-    async def connect_async(self):
+    async def connect_async(self) -> None:
         """
         Connects to the device using BleakRetryConnector.
 
@@ -497,7 +529,7 @@ class AsyncCometBlue:
             server_pin=self.pin,
         )
 
-    async def disconnect_async(self):
+    async def disconnect_async(self) -> None:
         """
         Disconnects the device.
 
@@ -508,7 +540,7 @@ class AsyncCometBlue:
             async with asyncio.timeout(BLEAK_TIMEOUT):
                 await self.client.disconnect()
 
-    async def get_device_info_async(self) -> dict:
+    async def get_device_info_async(self) -> DeviceInfo:
         """
         Retrieves the device information characteristics.
 
@@ -527,7 +559,7 @@ class AsyncCometBlue:
         except UnicodeDecodeError as ex:
             raise InvalidByteValueError("Invalid device information received: invalid UTF-8") from ex
 
-    async def get_temperature_async(self) -> dict:
+    async def get_temperature_async(self) -> TemperatureValues:
         """Retrieves the temperature configurations from the device.
 
         :return: dict of the retrieved values
@@ -535,7 +567,7 @@ class AsyncCometBlue:
         value = await self.__read_value(const.CHARACTERISTIC_TEMPERATURE)
         return self._decode_temperature(value)
 
-    async def set_temperature_async(self, values: dict[str, float]):
+    async def set_temperature_async(self, values: dict[str, float] | TemperatureValues | None) -> None:
         """Sets the time from the device.
         Allowed values for updates are:
            - manualTemp: temperature for the manual mode
@@ -553,7 +585,7 @@ class AsyncCometBlue:
         new_value = self._encode_temperature(values)
         await self.__write_value(const.CHARACTERISTIC_TEMPERATURE, new_value)
 
-    async def get_battery_async(self):
+    async def get_battery_async(self) -> int:
         """
         Retrieves the battery level in percent from the device
 
@@ -577,7 +609,7 @@ class AsyncCometBlue:
         result = await self.__read_value(const.CHARACTERISTIC_DATETIME)
         return self._decode_datetime(result)
 
-    async def set_datetime_async(self, date: datetime | None = None):
+    async def set_datetime_async(self, date: datetime | None = None) -> None:
         """
         Sets the date and time of the device - used for schedules
 
@@ -586,7 +618,7 @@ class AsyncCometBlue:
         new_value = self._encode_datetime(date or datetime.now())
         await self.__write_value(const.CHARACTERISTIC_DATETIME, new_value)
 
-    async def get_weekday_async(self, weekday: Weekday) -> dict:
+    async def get_weekday_async(self, weekday: Weekday) -> dict[str, str]:
         """
         Retrieves the start and end times of all programmed heating periods for the given day.
 
@@ -597,7 +629,7 @@ class AsyncCometBlue:
         value = await self.__read_value(uuid)
         return self._decode_weekday(value)
 
-    async def set_weekday_async(self, weekday: Weekday, values: dict):
+    async def set_weekday_async(self, weekday: Weekday, values: dict[str, str]) -> None:
         """
         Sets the start and end times for programmed heating periods for the given day.
 
@@ -610,7 +642,7 @@ class AsyncCometBlue:
             _LOGGER.warning("Setting empty schedule for %s", weekday)
         await self.__write_value(WEEKDAY[weekday], new_value)
 
-    async def set_weekdays_async(self, values: dict):
+    async def set_weekdays_async(self, values: dict[str, dict[str, str] | None]) -> None:
         """
         Sets the start and end times for programmed heating periods for the given set of days.
 
@@ -623,7 +655,7 @@ class AsyncCometBlue:
             weekday = Weekday[day.upper()]
             await self.set_weekday_async(weekday, day_values)
 
-    async def get_holiday_async(self, number: int) -> dict:
+    async def get_holiday_async(self, number: int) -> HolidayValues:
         """
         Retrieves the configured holiday 1-8.
 
@@ -636,7 +668,7 @@ class AsyncCometBlue:
         values = await self.__read_value(HOLIDAY[number])
         return self._decode_holiday(values)
 
-    async def set_holiday_async(self, number: int, values: dict):
+    async def set_holiday_async(self, number: int, values: HolidayValues) -> None:
         """
         Sets the configured holiday 1-8.
 
@@ -660,7 +692,7 @@ class AsyncCometBlue:
             raise InvalidByteValueError(f"Invalid settings received: {mode!r}")
         return bool(mode[0] & 0x01)
 
-    async def set_manual_mode_async(self, value: bool):
+    async def set_manual_mode_async(self, value: bool) -> None:
         """
         Enables/Disables the manual mode.
 
@@ -720,7 +752,9 @@ class AsyncCometBlue:
 
         return result
 
-    async def get_multiple_async(self, values: list[str]) -> dict:
+    async def get_multiple_async(
+        self, values: list[str]
+    ) -> dict[str, int | bool | datetime | TemperatureValues | dict[str, str] | HolidayValues]:
         """
         Retrieve multiple information at once. More performant than calling them by themselves - only one connection is
         used.
@@ -745,7 +779,7 @@ class AsyncCometBlue:
             raise error
         return result
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "AsyncCometBlue":
         if self.__session_owner is asyncio.current_task():
             raise BleakError("Nested connection contexts are not supported")
         await self.__session_lock.acquire()
@@ -758,7 +792,12 @@ class AsyncCometBlue:
             raise
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         try:
             await self.disconnect_async()
         except Exception:
@@ -770,7 +809,7 @@ class AsyncCometBlue:
             self.__session_lock.release()
 
     @classmethod
-    async def discover_async(cls, timeout=5) -> list[BLEDevice]:
+    async def discover_async(cls, timeout: float = 5) -> list[BLEDevice]:
         """
         Discovers available CometBlue devices.
 

@@ -12,7 +12,15 @@ from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakCharacteristicNotFoundError, BleakDeviceNotFoundError, BleakError
 
 import eurotronic_cometblue_ha as cometblue
-from eurotronic_cometblue_ha import AsyncCometBlue, CometBlueBleakClient, InvalidByteValueError, Weekday, const
+from eurotronic_cometblue_ha import (
+    AsyncCometBlue,
+    CometBlueBleakClient,
+    HolidayValues,
+    InvalidByteValueError,
+    TemperatureValues,
+    Weekday,
+    const,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -54,10 +62,10 @@ async def test_connect_and_disconnect(
 
     assert blue.device is device
     assert blue.connected is False
-    assert await blue.disconnect_async() is None
+    await blue.disconnect_async()
     gatt_client.disconnect.assert_not_awaited()
-    assert await blue.connect_async() is None
-    assert await blue.connect_async() is None
+    await blue.connect_async()
+    await blue.connect_async()
     connector.assert_awaited_once_with(
         CometBlueBleakClient,
         device,
@@ -67,8 +75,8 @@ async def test_connect_and_disconnect(
     )
     assert blue.connected is True
 
-    assert await blue.disconnect_async() is None
-    assert await blue.disconnect_async() is None
+    await blue.disconnect_async()
+    await blue.disconnect_async()
     gatt_client.disconnect.assert_awaited_once_with()
     assert blue.connected is False
     assert blue.client is gatt_client
@@ -329,6 +337,30 @@ async def test_temperature_read(
     gatt_client.read_gatt_char.assert_awaited_once_with(const.CHARACTERISTIC_TEMPERATURE)
 
 
+async def test_typed_temperature_read_modify_write(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Keep typed read results as ordinary dictionaries accepted by the setter."""
+    gatt_client.read_gatt_char.return_value = bytearray([49, 32, 32, 40, 0, 240, 10])
+    values: TemperatureValues = await blue.get_temperature_async()
+    assert isinstance(values, dict)
+    assert type(values["windowOpen"]) is bool
+    assert type(values["windowOpenMinutes"]) is int
+    values["manualTemp"] = 18.0
+
+    await blue.set_temperature_async(values)
+
+    gatt_client.write_gatt_char.assert_awaited_once_with(
+        const.CHARACTERISTIC_TEMPERATURE, bytearray([128, 36, 32, 40, 0, 128, 128]), response=True
+    )
+    gatt_client.read_gatt_char.assert_awaited_once()
+
+
+async def test_temperature_none_is_noop(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Accept the existing optional temperature update without BLE I/O."""
+    await blue.set_temperature_async(None)
+    gatt_client.write_gatt_char.assert_not_awaited()
+    gatt_client.read_gatt_char.assert_not_awaited()
+
+
 async def test_getters_read_fresh_values(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
     """Read the battery characteristic again on each getter call."""
     gatt_client.read_gatt_char.side_effect = [bytearray([80]), bytearray([79])]
@@ -502,12 +534,27 @@ async def test_temperature_write(
     blue: AsyncCometBlue, gatt_client: MagicMock, values: dict[str, float], expected: list[int]
 ) -> None:
     """Write the expected temperature payload without implicit reads or disconnects."""
-    assert await blue.set_temperature_async(values) is None
+    await blue.set_temperature_async(values)
     gatt_client.write_gatt_char.assert_awaited_once_with(
         const.CHARACTERISTIC_TEMPERATURE, bytearray(expected), response=True
     )
     gatt_client.read_gatt_char.assert_not_awaited()
     gatt_client.disconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize("key", ["manualTemp", "targetTempLow", "targetTempHigh"])
+@pytest.mark.parametrize("value", [None, "20", []])
+async def test_temperature_write_skips_nonnumeric_values(
+    blue: AsyncCometBlue, gatt_client: MagicMock, key: str, value: object
+) -> None:
+    """Leave unsupported field values unchanged while applying valid updates."""
+    method = "set_temperature_async"
+    await getattr(blue, method)({key: value, "tempOffset": 1.0})
+
+    gatt_client.write_gatt_char.assert_awaited_once_with(
+        const.CHARACTERISTIC_TEMPERATURE, bytearray([128, 128, 128, 128, 2, 128, 128]), response=True
+    )
+    gatt_client.read_gatt_char.assert_not_awaited()
 
 
 @pytest.mark.parametrize(("reported_raw", "expected_temperature"), [(40, 20.0), (32, 16.0)])
@@ -554,7 +601,7 @@ async def test_invalid_temperature_not_written(
 
 async def test_datetime_write(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
     """Encode datetime fields in wire order and omit seconds."""
-    assert await blue.set_datetime_async(datetime(2026, 10, 10, 12, 34, 56)) is None
+    await blue.set_datetime_async(datetime(2026, 10, 10, 12, 34, 56))
     gatt_client.write_gatt_char.assert_awaited_once_with(
         const.CHARACTERISTIC_DATETIME, bytearray([34, 12, 10, 10, 26]), response=True
     )
@@ -589,7 +636,7 @@ async def test_weekday_write(
     blue: AsyncCometBlue, gatt_client: MagicMock, values: dict[str, str], expected: list[int]
 ) -> None:
     """Encode compacted schedule periods in ten-minute units and zero unused slots."""
-    assert await blue.set_weekday_async(Weekday.MONDAY, values) is None
+    await blue.set_weekday_async(Weekday.MONDAY, values)
     gatt_client.write_gatt_char.assert_awaited_once_with(
         const.CHARACTERISTIC_MONDAY, bytearray(expected), response=True
     )
@@ -599,18 +646,43 @@ async def test_multiple_weekday_writes(blue: AsyncCometBlue, gatt_client: MagicM
     """Accept case-insensitive weekday names and skip entries with no schedule."""
     values = {"start1": "08:00", "end1": "09:00"}
 
-    assert await blue.set_weekdays_async({"monday": values, "TUESDAY": None, "Friday": values}) is None
+    await blue.set_weekdays_async({"monday": values, "TUESDAY": None, "Friday": values})
     assert gatt_client.write_gatt_char.await_args_list == [
         call(const.CHARACTERISTIC_MONDAY, bytearray([48, 54, 0, 0, 0, 0, 0, 0]), response=True),
         call(const.CHARACTERISTIC_FRIDAY, bytearray([48, 54, 0, 0, 0, 0, 0, 0]), response=True),
     ]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        bytes([0, 0, 0, 0, 128, 0, 0, 0, 0]),
+        bytes([128, 26, 12, 26, 14, 5, 1, 27, 33]),
+    ],
+    ids=["inactive", "active-without-start"],
+)
+async def test_holiday_readback_requires_valid_write_fields(
+    blue: AsyncCometBlue, gatt_client: MagicMock, payload: bytes
+) -> None:
+    """Keep write validation even though reads and writes share a dictionary type."""
+    gatt_client.read_gatt_char.return_value = bytearray(payload)
+    values: HolidayValues = await blue.get_holiday_async(1)
+
+    with pytest.raises(ValueError):
+        await blue.set_holiday_async(1, values)
+
+    gatt_client.write_gatt_char.assert_not_awaited()
+
+
 async def test_holiday_write(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
     """Encode holiday dates and half-degree temperature into the selected slot."""
-    values = {"start": datetime(2026, 12, 26, 18), "end": datetime(2027, 1, 5, 14), "temperature": 16.5}
+    values: HolidayValues = {
+        "start": datetime(2026, 12, 26, 18),
+        "end": datetime(2027, 1, 5, 14),
+        "temperature": 16.5,
+    }
 
-    assert await blue.set_holiday_async(2, values) is None
+    await blue.set_holiday_async(2, values)
     gatt_client.write_gatt_char.assert_awaited_once_with(
         const.CHARACTERISTIC_HOLIDAY_2, bytearray([18, 26, 12, 26, 14, 5, 1, 27, 33]), response=True
     )
@@ -619,7 +691,7 @@ async def test_holiday_write(blue: AsyncCometBlue, gatt_client: MagicMock) -> No
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_manual_mode_write(blue: AsyncCometBlue, gatt_client: MagicMock, enabled: bool) -> None:
     """Write the manual-mode flag while marking the remaining settings unchanged."""
-    assert await blue.set_manual_mode_async(enabled) is None
+    await blue.set_manual_mode_async(enabled)
     gatt_client.write_gatt_char.assert_awaited_once_with(
         const.CHARACTERISTIC_SETTINGS, bytearray([int(enabled), 128, 128]), response=True
     )
