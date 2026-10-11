@@ -22,13 +22,11 @@ Comet Blue radiator controllers are sold under different names:
 | Xavax          | Hama       |  :grey_question:   |
 | Silvercrest    | RT2000BT   |  :grey_question:   |
 
-This library should work with all listed radiator controllers, but is only tested with a Sygonix HT100BT which is the
+This library should work with all listed radiator controllers, but is only tested with a Eurotronic Comet Blue which is the
 only one I own.
 
 If your device is not listed here but looks similar (or you know it is a rebranded Comet Blue), or if you are able to
 test this library with another device - let me know your results.
-
-## Installation
 
 Just
 

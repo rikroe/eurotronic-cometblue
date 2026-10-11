@@ -19,6 +19,7 @@ jobs:
       matrix:
         python-version:
           - "3.12"  # Minimum supported Python version
+          - "3.13"
           - "3.14"  # Home Assistant
           - "3.15"  # Latest Python version
     steps:
