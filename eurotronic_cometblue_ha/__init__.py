@@ -21,8 +21,8 @@ from bleak_retry_connector import (
 
 from . import const
 
-MAC_REGEX = re.compile('([0-9A-F]{2}:){5}[0-9A-F]{2}')
-UUID_REGEX = re.compile('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+MAC_REGEX = re.compile("([0-9A-F]{2}:){5}[0-9A-F]{2}")
+UUID_REGEX = re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 _LOGGER = getLogger(__name__)
 
@@ -32,12 +32,12 @@ class InvalidByteValueError(ValueError):
 
 
 class Weekday(Enum):
-    MONDAY = 1,
-    TUESDAY = 2,
-    WEDNESDAY = 3,
-    THURSDAY = 4,
-    FRIDAY = 5,
-    SATURDAY = 6,
+    MONDAY = 1
+    TUESDAY = 2
+    WEDNESDAY = 3
+    THURSDAY = 4
+    FRIDAY = 5
+    SATURDAY = 6
     SUNDAY = 7
 
 
@@ -48,7 +48,7 @@ WEEKDAY = {
     Weekday.THURSDAY: const.CHARACTERISTIC_THURSDAY,
     Weekday.FRIDAY: const.CHARACTERISTIC_FRIDAY,
     Weekday.SATURDAY: const.CHARACTERISTIC_SATURDAY,
-    Weekday.SUNDAY: const.CHARACTERISTIC_SUNDAY
+    Weekday.SUNDAY: const.CHARACTERISTIC_SUNDAY,
 }
 
 HOLIDAY = {
@@ -73,6 +73,7 @@ TEMPERATURE_ALLOWED_RANGE = {
 
 class CometBlueBleakClient(BleakClientWithServiceCache):
     """Custom Bleak client for Comet Blue devices."""
+
     server_pin: bytearray
 
     def __init__(self, *args, **kwargs):
@@ -126,13 +127,12 @@ class AsyncCometBlue:
                     "device must be a valid UUID in the format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX or bleak.BLEDevice."
                 )
             _LOGGER.debug("Found string device: %s", device)
-            device = BLEDevice(device) # pyright: ignore[reportCallIssue]
+            device = BLEDevice(device)  # pyright: ignore[reportCallIssue]
         if 0 > pin >= 1000000:
             raise ValueError("Pin can only consist of digits. Up to 6 digits allowed.")
 
         self.device = device
         self.pin = self.transform_pin(pin)
-
 
     async def __read_value(self, characteristic: UUID) -> bytearray:
         """
@@ -162,7 +162,7 @@ class AsyncCometBlue:
         :param pin: the pin to use
         :return: bytearray representing the pin
         """
-        return bytearray(pin.to_bytes(4, 'little', signed=False))
+        return bytearray(pin.to_bytes(4, "little", signed=False))
 
     @staticmethod
     def __to_time_str(value: int) -> str | None:
@@ -240,26 +240,16 @@ class AsyncCometBlue:
         new_value = bytearray(7)
         new_value[0] = const.UNCHANGED_VALUE
 
-        if values.get("manualTemp") is not None:
-            if not 7.5 <= values["manualTemp"] <= 28.5:
-                raise ValueError(f"Invalid manualTemp: {values['manualTemp']}")
-            new_value[1] = int(values["manualTemp"] * 2)
-        else:
-            new_value[2] = const.UNCHANGED_VALUE
+        temp_index = {"manualTemp": 1, "targetTempLow": 2, "targetTempHigh": 3}
 
-        if values.get("targetTempLow") is not None:
-            if not 7.5 <= values["targetTempLow"] <= 28.5:
-                raise ValueError(f"Invalid targetTempLow: {values['targetTempLow']}")
-            new_value[2] = int(values["targetTempLow"] * 2)
-        else:
-            new_value[2] = const.UNCHANGED_VALUE
-
-        if values.get("targetTempHigh") is not None:
-            if not 7.5 <= values["targetTempHigh"] <= 28.5:
-                raise ValueError(f"Invalid targetTempHigh: {values['targetTempHigh']}")
-            new_value[3] = int(values["targetTempHigh"] * 2)
-        else:
-            new_value[3] = const.UNCHANGED_VALUE
+        for key, index in temp_index.items():
+            temperature = values.get(key)
+            if temperature is None:
+                new_value[index] = const.UNCHANGED_VALUE
+                continue
+            if not 7.5 <= temperature <= 28.5:
+                raise ValueError(f"Invalid {key}: {temperature}")
+            new_value[index] = int(temperature * 2)
 
         if values.get("tempOffset") is not None:
             offset_value = values["tempOffset"]
@@ -318,13 +308,13 @@ class AsyncCometBlue:
         :return: dict containing start1-4 and end1-4 times
         """
         result = {}
-        for i in range(1,5):
+        for i in range(1, 5):
             # validate if start and end are in valid range
             # 144: 24:00, 255: not set
-            if 144 < max(value[int(i/2)*2], value[int(i/2)*2+1]) < 255:
+            if 144 < max(value[int(i / 2) * 2], value[int(i / 2) * 2 + 1]) < 255:
                 raise InvalidByteValueError(f"Invalid weekday received: {value}")
-            start = self.__to_time_str(value[int(i/2)*2])
-            end = self.__to_time_str(value[int(i/2)*2+1])
+            start = self.__to_time_str(value[int(i / 2) * 2])
+            end = self.__to_time_str(value[int(i / 2) * 2 + 1])
             if start is not None and end is not None and start != end:
                 result[str.format("start{}", i)] = start
                 result[str.format("end{}", i)] = end
@@ -384,7 +374,7 @@ class AsyncCometBlue:
             values[3] not in range(0, 100)
             or values[2] not in range(1, 13)
             or values[1] not in range(1, 31)
-            or not(values[0] in range(0, 25) or values[0] == 128)
+            or not (values[0] in range(0, 25) or values[0] == 128)
             or values[7] not in range(0, 100)
             or values[6] not in range(1, 13)
             or values[5] not in range(1, 31)
@@ -471,7 +461,7 @@ class AsyncCometBlue:
         return {
             "model": (await self.__read_value(const.CHARACTERISTIC_MODEL)).decode(),
             "version": (await self.__read_value(const.CHARACTERISTIC_VERSION)).decode(),
-            "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode()
+            "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode(),
         }
 
     async def get_temperature_async(self) -> dict:
@@ -528,7 +518,7 @@ class AsyncCometBlue:
 
     async def get_weekday_async(self, weekday: Weekday) -> dict:
         """
-        Retrieves the start and end times of all programed heating periods for the given day.
+        Retrieves the start and end times of all programmed heating periods for the given day.
 
         :param weekday: the day to query
         :return: dict with start# and end# values. # = 1-4
@@ -539,20 +529,20 @@ class AsyncCometBlue:
 
     async def set_weekday_async(self, weekday: Weekday, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given day.
+        Sets the start and end times for programmed heating periods for the given day.
 
         :param weekday: the day to set
         :param values: dict with start# and end# values. # = 1-4. Pattern "HH:mm"
         """
 
         new_value = self.__transform_weekday_request(values)
-        if new_value == bytearray([0]*8):
+        if new_value == bytearray([0] * 8):
             _LOGGER.warning("Setting empty schedule for %s", weekday)
         await self.__write_value(WEEKDAY[weekday], new_value)
 
     async def set_weekdays_async(self, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given set of days.
+        Sets the start and end times for programmed heating periods for the given set of days.
 
         :param values: dict with weekdays as key and values as dict of start# and end# values. # = 1-4. Pattern "HH:mm"
         """
@@ -618,14 +608,12 @@ class AsyncCometBlue:
         weekdays), 'manual']
         :return: dictionary of type {key: (func_name, parameter)}.
         """
-        result = {}
+        result: dict = {}
 
         if len(values) == 0:
             return result
 
-        switcher_holidays = {
-            str.format("holiday{}", day): ("get_holiday", day) for day in HOLIDAY
-        }
+        switcher_holidays = {str.format("holiday{}", day): ("get_holiday", day) for day in HOLIDAY}
         switcher_weekdays = {
             "monday": ("get_weekday", Weekday.MONDAY),
             "tuesday": ("get_weekday", Weekday.TUESDAY),
@@ -697,9 +685,7 @@ class AsyncCometBlue:
         :return: list of CometBlue BLEDevices.
         """
         devices = await BleakScanner.discover(timeout, return_adv=True)
-        cometblue_devices = [
-            d[0] for d in devices.values() if const.SERVICE in d[1].service_uuids
-        ]
+        cometblue_devices = [d[0] for d in devices.values() if const.SERVICE in d[1].service_uuids]
         return cometblue_devices
 
 
@@ -793,7 +779,7 @@ class CometBlue(AsyncCometBlue):
 
     def get_weekday(self, weekday: Weekday) -> dict:
         """
-        Retrieves the start and end times of all programed heating periods for the given day.
+        Retrieves the start and end times of all programmed heating periods for the given day.
 
         :param weekday: the day to query
         :return: dict with start# and end# values. # = 1-4
@@ -802,7 +788,7 @@ class CometBlue(AsyncCometBlue):
 
     def set_weekday(self, weekday: Weekday, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given day.
+        Sets the start and end times for programmed heating periods for the given day.
 
         :param weekday: the day to set
         :param values: dict with start# and end# values. # = 1-4. Pattern "HH:mm"
