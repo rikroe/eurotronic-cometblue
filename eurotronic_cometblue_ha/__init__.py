@@ -144,6 +144,12 @@ class AsyncCometBlue:
         self.client = None
         self.__session_lock = asyncio.Lock()
         self.__session_owner: asyncio.Task[Any] | None = None
+        self.__raw: dict[UUID, bytes] = {}
+
+    @property
+    def raw(self) -> dict[UUID, bytes]:
+        """Return the latest received byte values without reading from the device."""
+        return self.__raw.copy()
 
     def __check_session_owner(self) -> None:
         if self.__session_owner is not None and self.__session_owner is not asyncio.current_task():
@@ -160,6 +166,7 @@ class AsyncCometBlue:
         if self.client is None or not self.client.is_connected:
             raise BleakError("Device is not connected")
         value = await self.client.read_gatt_char(characteristic)
+        self.__raw[characteristic] = bytes(value)
         return value
 
     async def __write_value(self, characteristic: UUID, new_value: bytearray):
@@ -225,7 +232,7 @@ class AsyncCometBlue:
         return hour + minutes
 
     @staticmethod
-    def __transform_temperature_response(value: bytearray) -> dict:
+    def _decode_temperature(value: bytes | bytearray) -> dict:
         """
         Transforms a temperature response to a dictionary containing the values.
 
@@ -248,12 +255,12 @@ class AsyncCometBlue:
 
         for k, v in TEMPERATURE_ALLOWED_RANGE.items():
             if not v[0] <= result[k] <= v[1]:
-                raise InvalidByteValueError(f"Invalid temperature received: {value}")
+                raise InvalidByteValueError(f"Invalid temperature received: {value!r}")
 
         return result
 
     @staticmethod
-    def __transform_temperature_request(values: dict[str, float]) -> bytearray:
+    def _encode_temperature(values: dict[str, float]) -> bytearray:
         """
         Transforms a temperature dictionary to a bytearray to be transferred to the device.
         Valid dictionary entries are [manualTemp, targetTempLow, targetTempHigh, tempOffset].
@@ -291,7 +298,7 @@ class AsyncCometBlue:
         return new_value
 
     @staticmethod
-    def __transform_datetime_response(value: bytearray) -> datetime:
+    def _decode_datetime(value: bytes | bytearray) -> datetime:
         """
         Transforms a date response to a datetime object.
 
@@ -308,11 +315,11 @@ class AsyncCometBlue:
         try:
             dt = datetime(year, month, day, hour, minute)
         except ValueError as ex:
-            raise InvalidByteValueError(f"Invalid datetime received: {value}") from ex
+            raise InvalidByteValueError(f"Invalid datetime received: {value!r}") from ex
         return dt
 
     @staticmethod
-    def __transform_datetime_request(value: datetime) -> bytearray:
+    def _encode_datetime(value: datetime) -> bytearray:
         """
         Transforms a datetime object to a bytearray to be transferred to the device.
 
@@ -327,7 +334,8 @@ class AsyncCometBlue:
         new_value[4] = value.year % 100
         return new_value
 
-    def __transform_weekday_response(self, value: bytearray) -> dict:
+    @classmethod
+    def _decode_weekday(cls, value: bytes | bytearray) -> dict:
         """
         Transforms a weekday response to a dictionary containing all non-empty start and end times.
 
@@ -342,15 +350,15 @@ class AsyncCometBlue:
             # validate if start and end are in valid range
             # 144: 24:00, 255: not set
             if any(144 < entry < 255 for entry in (value[index], value[index + 1])):
-                raise InvalidByteValueError(f"Invalid weekday received: {value}")
-            start = self.__to_time_str(value[index])
-            end = self.__to_time_str(value[index + 1])
+                raise InvalidByteValueError(f"Invalid weekday received: {value!r}")
+            start = cls.__to_time_str(value[index])
+            end = cls.__to_time_str(value[index + 1])
             if start is not None and end is not None and start != end:
                 result[str.format("start{}", slot)] = start
                 result[str.format("end{}", slot)] = end
         return result
 
-    def __transform_weekday_request(self, values: dict) -> bytearray:
+    def _encode_weekday(self, values: dict) -> bytearray:
         """
         Transforms a dictionary containing start1-4 and end1-4 times to a bytearray used by the device.
         Resets all unused time-"slots".
@@ -384,7 +392,7 @@ class AsyncCometBlue:
         return new_value_bytes
 
     @staticmethod
-    def __transform_holiday_response(values: bytearray) -> dict:
+    def _decode_holiday(values: bytes | bytearray) -> dict:
         """
         Transforms a retrieved holiday response to a dictionary containing start and end `datetime`s as well as the set
         temperature. If start is None, vacation mode is active.
@@ -413,7 +421,7 @@ class AsyncCometBlue:
             or values[5] not in range(1, 32)
             or values[4] not in range(0, 24)
         ):
-            raise InvalidByteValueError(f"Invalid holiday received: {values}")
+            raise InvalidByteValueError(f"Invalid holiday received: {values!r}")
 
         try:
             start = None if values[0] == 128 else datetime(values[3] + 2000, values[2], values[1], values[0])
@@ -426,7 +434,7 @@ class AsyncCometBlue:
         return result
 
     @staticmethod
-    def __transform_holiday_request(values: dict) -> bytearray:
+    def _encode_holiday(values: dict) -> bytearray:
         """
         Transforms a dictionary containing start: datetime, end: datetime as well as temperature: float to a bytearray
         to be transferred to the device.
@@ -506,12 +514,16 @@ class AsyncCometBlue:
 
         :return: dict of the retrieved values
         """
+        return {
+            "model": self._decode_text(await self.__read_value(const.CHARACTERISTIC_MODEL)),
+            "version": self._decode_text(await self.__read_value(const.CHARACTERISTIC_VERSION)),
+            "manufacturer": self._decode_text(await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)),
+        }
+
+    @staticmethod
+    def _decode_text(value: bytes | bytearray) -> str:
         try:
-            return {
-                "model": (await self.__read_value(const.CHARACTERISTIC_MODEL)).decode(),
-                "version": (await self.__read_value(const.CHARACTERISTIC_VERSION)).decode(),
-                "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode(),
-            }
+            return value.decode()
         except UnicodeDecodeError as ex:
             raise InvalidByteValueError("Invalid device information received: invalid UTF-8") from ex
 
@@ -521,7 +533,7 @@ class AsyncCometBlue:
         :return: dict of the retrieved values
         """
         value = await self.__read_value(const.CHARACTERISTIC_TEMPERATURE)
-        return self.__transform_temperature_response(value)
+        return self._decode_temperature(value)
 
     async def set_temperature_async(self, values: dict[str, float]):
         """Sets the time from the device.
@@ -538,7 +550,7 @@ class AsyncCometBlue:
         if values is None:
             return
 
-        new_value = self.__transform_temperature_request(values)
+        new_value = self._encode_temperature(values)
         await self.__write_value(const.CHARACTERISTIC_TEMPERATURE, new_value)
 
     async def get_battery_async(self):
@@ -548,6 +560,10 @@ class AsyncCometBlue:
         :return: battery level in percent
         """
         value = await self.__read_value(const.CHARACTERISTIC_BATTERY)
+        return self._decode_battery(value)
+
+    @staticmethod
+    def _decode_battery(value: bytes | bytearray) -> int:
         if len(value) < 1:
             raise InvalidByteValueError(f"Invalid battery received: {value!r}")
         return value[0]
@@ -559,7 +575,7 @@ class AsyncCometBlue:
         :return: the retrieved datetime
         """
         result = await self.__read_value(const.CHARACTERISTIC_DATETIME)
-        return self.__transform_datetime_response(result)
+        return self._decode_datetime(result)
 
     async def set_datetime_async(self, date: datetime | None = None):
         """
@@ -567,7 +583,7 @@ class AsyncCometBlue:
 
         :param date: a datetime object, defaults to now
         """
-        new_value = self.__transform_datetime_request(date or datetime.now())
+        new_value = self._encode_datetime(date or datetime.now())
         await self.__write_value(const.CHARACTERISTIC_DATETIME, new_value)
 
     async def get_weekday_async(self, weekday: Weekday) -> dict:
@@ -579,7 +595,7 @@ class AsyncCometBlue:
         """
         uuid = WEEKDAY[weekday]
         value = await self.__read_value(uuid)
-        return self.__transform_weekday_response(value)
+        return self._decode_weekday(value)
 
     async def set_weekday_async(self, weekday: Weekday, values: dict):
         """
@@ -589,7 +605,7 @@ class AsyncCometBlue:
         :param values: dict with start# and end# values. # = 1-4. Pattern "HH:mm"
         """
 
-        new_value = self.__transform_weekday_request(values)
+        new_value = self._encode_weekday(values)
         if new_value == bytearray([0] * 8):
             _LOGGER.warning("Setting empty schedule for %s", weekday)
         await self.__write_value(WEEKDAY[weekday], new_value)
@@ -618,7 +634,7 @@ class AsyncCometBlue:
             return {}
 
         values = await self.__read_value(HOLIDAY[number])
-        return self.__transform_holiday_response(values)
+        return self._decode_holiday(values)
 
     async def set_holiday_async(self, number: int, values: dict):
         """
@@ -627,7 +643,7 @@ class AsyncCometBlue:
         :param number: the number of the holiday season. Values 1-8 allowed
         :param values: start: datetime, end: datetime, temperature: float (0.5 degree steps)
         """
-        new_value = self.__transform_holiday_request(values)
+        new_value = self._encode_holiday(values)
         await self.__write_value(HOLIDAY[number], new_value)
 
     async def get_manual_mode_async(self) -> bool:
@@ -636,6 +652,10 @@ class AsyncCometBlue:
         :return: True - if manual mode is enabled, False if not
         """
         mode = await self.__read_value(const.CHARACTERISTIC_SETTINGS)
+        return self._decode_manual_mode(mode)
+
+    @staticmethod
+    def _decode_manual_mode(mode: bytes | bytearray) -> bool:
         if len(mode) < 1:
             raise InvalidByteValueError(f"Invalid settings received: {mode!r}")
         return bool(mode[0] & 0x01)

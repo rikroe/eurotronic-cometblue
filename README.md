@@ -72,6 +72,12 @@ and refresh scheduling remain the caller's responsibility.
 
 :warning: the device applies set values when the connection is closed, not directly after setting them.
 
+### Last-known state
+
+`AsyncCometBlue.raw` returns a dictionary mapping characteristic UUIDs to their latest
+immutable bytes, without BLE I/O or decoding. Unread characteristics are
+absent. Malformed responses remain available even when the getter raises
+
 ### Migrating from the synchronous client
 
 The synchronous `CometBlue` class has been removed. Replace it with `AsyncCometBlue`,

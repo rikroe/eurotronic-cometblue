@@ -338,6 +338,105 @@ async def test_getters_read_fresh_values(blue: AsyncCometBlue, gatt_client: Magi
     assert gatt_client.read_gatt_char.await_args_list == [call(const.CHARACTERISTIC_BATTERY)] * 2
 
 
+async def test_latest_values_are_detached(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Replace each characteristic's bytes without changing earlier snapshots."""
+    empty = blue.raw
+    assert not empty
+    payload = bytearray([80])
+    gatt_client.read_gatt_char.return_value = payload
+    await blue.get_battery_async()
+    snapshot = blue.raw
+    payload[0] = 0
+    first = snapshot[const.CHARACTERISTIC_BATTERY]
+    assert isinstance(first, bytes)
+    assert first == b"\x50"
+
+    for level in (79, 78, 77):
+        gatt_client.read_gatt_char.return_value = bytearray([level])
+        await blue.get_battery_async()
+    gatt_client.read_gatt_char.return_value = bytearray([1])
+    await blue.get_manual_mode_async()
+
+    assert blue.raw == {const.CHARACTERISTIC_BATTERY: b"\x4d", const.CHARACTERISTIC_SETTINGS: b"\x01"}
+    assert snapshot == {const.CHARACTERISTIC_BATTERY: first}
+    assert not empty
+    assert gatt_client.read_gatt_char.await_count == 5
+
+
+async def test_malformed_response_is_stored_before_decoding(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Retain successfully received malformed bytes even though conversion raises."""
+    gatt_client.read_gatt_char.return_value = bytearray([49, 32, 32, 40, 0, 0, 10])
+    await blue.get_temperature_async()
+    previous = blue.raw
+    gatt_client.read_gatt_char.return_value = bytearray()
+    with pytest.raises(InvalidByteValueError):
+        await blue.get_temperature_async()
+    assert blue.raw == {const.CHARACTERISTIC_TEMPERATURE: b""}
+    assert previous == {const.CHARACTERISTIC_TEMPERATURE: bytes([49, 32, 32, 40, 0, 0, 10])}
+
+
+@pytest.mark.parametrize("error", [BleakError("read failed"), TimeoutError(), asyncio.CancelledError()])
+async def test_failed_reads_preserve_state(blue: AsyncCometBlue, gatt_client: MagicMock, error: BaseException) -> None:
+    """Leave received values untouched when transport fails or is cancelled."""
+    gatt_client.read_gatt_char.return_value = bytearray([80])
+    await blue.get_battery_async()
+    previous = blue.raw
+    gatt_client.read_gatt_char.side_effect = error
+    for getter in (blue.get_battery_async, blue.get_temperature_async):
+        with pytest.raises(type(error)):
+            await getter()
+        assert blue.raw == previous
+
+
+async def test_raw_copy_is_isolated_and_per_device(
+    blue: AsyncCometBlue, device: BLEDevice, gatt_client: MagicMock
+) -> None:
+    """Allow copy mutation without changing values stored by the client."""
+    gatt_client.read_gatt_char.return_value = bytearray([80])
+    await blue.get_battery_async()
+    snapshot = blue.raw
+    characteristic = const.CHARACTERISTIC_BATTERY
+    snapshot[characteristic] = b"\x00"
+    attribute = "raw"
+    with pytest.raises(AttributeError):
+        setattr(blue, attribute, {})
+    assert not AsyncCometBlue(device).raw
+
+    await blue.disconnect_async()
+    assert blue.raw[characteristic] == b"\x50"
+    assert snapshot[characteristic] == b"\x00"
+    gatt_client.read_gatt_char.assert_awaited_once()
+
+
+async def test_device_info_retains_partial_raw_values(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Keep every received field even if a later read or decoding fails."""
+    gatt_client.read_gatt_char.side_effect = [b"HT100BT", BleakError("read failed")]
+    with pytest.raises(BleakError):
+        await blue.get_device_info_async()
+    partial = blue.raw
+    assert partial == {const.CHARACTERISTIC_MODEL: b"HT100BT"}
+
+    gatt_client.read_gatt_char.side_effect = [b"HT100BT", b"1.0", b"\xff"]
+    with pytest.raises(InvalidByteValueError):
+        await blue.get_device_info_async()
+    invalid = blue.raw
+    assert invalid[const.CHARACTERISTIC_MANUFACTURER] == b"\xff"
+    assert gatt_client.read_gatt_char.await_count == 5
+
+    gatt_client.read_gatt_char.side_effect = [b"HT100BT", b"1.0", b"Sygonix"]
+    expected = await blue.get_device_info_async()
+    assert expected == {"model": "HT100BT", "version": "1.0", "manufacturer": "Sygonix"}
+    expected["model"] = "changed"
+    assert blue.raw == {
+        const.CHARACTERISTIC_MODEL: b"HT100BT",
+        const.CHARACTERISTIC_VERSION: b"1.0",
+        const.CHARACTERISTIC_MANUFACTURER: b"Sygonix",
+    }
+    assert partial == {const.CHARACTERISTIC_MODEL: b"HT100BT"}
+    assert invalid[const.CHARACTERISTIC_MANUFACTURER] == b"\xff"
+    assert gatt_client.read_gatt_char.await_count == 8
+
+
 async def test_device_info(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
     """Read and decode model, firmware version, and manufacturer in order."""
     gatt_client.read_gatt_char.side_effect = [bytearray(b"HT100BT"), bytearray(b"1.0"), bytearray(b"Sygonix")]
@@ -384,6 +483,7 @@ async def test_empty_holiday(blue: AsyncCometBlue, gatt_client: MagicMock) -> No
     gatt_client.read_gatt_char.return_value = bytearray([0, 0, 0, 0, 128, 0, 0, 0, 0])
 
     assert await blue.get_holiday_async(1) == {}
+    assert blue.raw[const.CHARACTERISTIC_HOLIDAY_1] == bytes([0, 0, 0, 0, 128, 0, 0, 0, 0])
 
 
 @pytest.mark.parametrize(
@@ -724,8 +824,10 @@ async def test_writable_function_round_trip(
     read = getattr(writable_blue, getter)
     assert writable_blue.client is not None
     original = {characteristic: bytearray(value) for characteristic, value in device_values.items()}
+    previous = writable_blue.raw
 
     assert await write(*write_args) is None
+    assert writable_blue.raw == previous
     assert device_values == original
     gatt_client.write_gatt_char.assert_awaited()
     for write_call in gatt_client.write_gatt_char.await_args_list:
@@ -739,6 +841,7 @@ async def test_writable_function_round_trip(
     await writable_blue.disconnect_async()
     await writable_blue.connect_async()
 
+    assert writable_blue.raw == previous
     for characteristic, value in device_values.items():
         assert await writable_blue.client.read_gatt_char(characteristic) == value
     assert await read(*read_args) == expected
@@ -757,6 +860,7 @@ async def test_temperature_write_echo_before_reconnect(writable_blue: AsyncComet
 
     with pytest.raises(InvalidByteValueError, match="Invalid temperature"):
         await writable_blue.get_temperature_async()
+    assert writable_blue.raw[const.CHARACTERISTIC_TEMPERATURE] == expected_command
 
     await writable_blue.disconnect_async()
     await writable_blue.connect_async()

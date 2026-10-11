@@ -120,11 +120,16 @@ async def test_fixed_layout_response_boundaries(
         gatt_client.read_gatt_char.return_value = received
         assert await getter(*args) == expected
         assert received == complete
+        reads = gatt_client.read_gatt_char.await_count
+        characteristic = gatt_client.read_gatt_char.await_args.args[0]
+        assert blue.raw[characteristic] == complete
+        assert gatt_client.read_gatt_char.await_count == reads
 
     for length in range(len(payload)):
         gatt_client.read_gatt_char.return_value = buffer_type(payload[:length])
         with pytest.raises(InvalidByteValueError):
             await getter(*args)
+        assert blue.raw[characteristic] == payload[:length]
 
 
 @pytest.mark.asyncio

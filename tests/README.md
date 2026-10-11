@@ -50,4 +50,9 @@ See `test_writable_function_round_trip` in
 [test_client.py](test_client.py) for examples using every setter.
 
 Protocol regressions in [test_codec.py](test_codec.py) exercise the existing client
-converters through the async API.
+converters through the async API and verify raw capture of complete and malformed responses.
+
+State tests in [test_client.py](test_client.py) verify latest-value replacement per
+characteristic, raw capture before decoding, isolated dictionary copies, partial device information,
+and independence between clients. Failed reads and writes do not create observations;
+readback after reconnect remains explicit. Snapshot access does not perform BLE I/O.
