@@ -162,6 +162,6 @@ virtual environment, and using the shared BLE mocks.
 
 * Thorsten Tränker for his reverse engineering work
   done [here](https://www.torsten-traenkner.de/wissen/smarthome/heizung.php)
-* [@zero-udo](https://github.com/zero-udo) for the inital library [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue)
+* [@zero-udo](https://github.com/zero-udo) for the initial library [zero-udo/eurotronic-cometblue](https://github.com/zero-udo/eurotronic-cometblue)
 * [@FloSchmidt](https://github.com/FloSchmidt) for [checking](https://github.com/zero-udo/eurotronic-cometblue/issues/5) the Eurotronic Comet Blue
 * [@rikroe](https://github.com/rikroe) for the switch to bleak

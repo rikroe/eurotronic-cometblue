@@ -518,7 +518,7 @@ class AsyncCometBlue:
 
     async def get_weekday_async(self, weekday: Weekday) -> dict:
         """
-        Retrieves the start and end times of all programed heating periods for the given day.
+        Retrieves the start and end times of all programmed heating periods for the given day.
 
         :param weekday: the day to query
         :return: dict with start# and end# values. # = 1-4
@@ -529,7 +529,7 @@ class AsyncCometBlue:
 
     async def set_weekday_async(self, weekday: Weekday, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given day.
+        Sets the start and end times for programmed heating periods for the given day.
 
         :param weekday: the day to set
         :param values: dict with start# and end# values. # = 1-4. Pattern "HH:mm"
@@ -542,7 +542,7 @@ class AsyncCometBlue:
 
     async def set_weekdays_async(self, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given set of days.
+        Sets the start and end times for programmed heating periods for the given set of days.
 
         :param values: dict with weekdays as key and values as dict of start# and end# values. # = 1-4. Pattern "HH:mm"
         """
@@ -608,7 +608,7 @@ class AsyncCometBlue:
         weekdays), 'manual']
         :return: dictionary of type {key: (func_name, parameter)}.
         """
-        result = {}
+        result: dict = {}
 
         if len(values) == 0:
             return result
@@ -779,7 +779,7 @@ class CometBlue(AsyncCometBlue):
 
     def get_weekday(self, weekday: Weekday) -> dict:
         """
-        Retrieves the start and end times of all programed heating periods for the given day.
+        Retrieves the start and end times of all programmed heating periods for the given day.
 
         :param weekday: the day to query
         :return: dict with start# and end# values. # = 1-4
@@ -788,7 +788,7 @@ class CometBlue(AsyncCometBlue):
 
     def set_weekday(self, weekday: Weekday, values: dict):
         """
-        Sets the start and end times for programed heating periods for the given day.
+        Sets the start and end times for programmed heating periods for the given day.
 
         :param weekday: the day to set
         :param values: dict with start# and end# values. # = 1-4. Pattern "HH:mm"
