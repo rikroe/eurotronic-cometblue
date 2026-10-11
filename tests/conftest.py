@@ -53,6 +53,11 @@ def prevent_bluetooth_access(monkeypatch: pytest.MonkeyPatch) -> None:
         "discover",
         AsyncMock(side_effect=AssertionError("Unit tests must mock BLE discovery")),
     )
+    monkeypatch.setattr(
+        cometblue.BleakScanner,
+        "find_device_by_address",
+        AsyncMock(side_effect=AssertionError("Unit tests must mock BLE address lookup")),
+    )
 
 
 @pytest.fixture
