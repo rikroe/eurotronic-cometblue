@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime
+from inspect import iscoroutinefunction
 from unittest.mock import AsyncMock, MagicMock, call
 from uuid import UUID
 
@@ -14,6 +15,33 @@ import eurotronic_cometblue_ha as cometblue
 from eurotronic_cometblue_ha import AsyncCometBlue, CometBlueBleakClient, InvalidByteValueError, Weekday, const
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_async_only_public_api() -> None:
+    """Expose the async client without a synchronous adapter or context manager."""
+    assert not hasattr(cometblue, "CometBlue")
+    for method in (
+        "connect",
+        "disconnect",
+        "get_device_info",
+        "get_temperature",
+        "set_temperature",
+        "get_battery",
+        "get_datetime",
+        "set_datetime",
+        "get_weekday",
+        "set_weekday",
+        "get_holiday",
+        "set_holiday",
+        "get_manual_mode",
+        "set_manual_mode",
+        "get_multiple",
+        "discover",
+    ):
+        assert not hasattr(AsyncCometBlue, method)
+        assert iscoroutinefunction(getattr(AsyncCometBlue, f"{method}_async"))
+    assert not hasattr(AsyncCometBlue, "__enter__")
+    assert not hasattr(AsyncCometBlue, "__exit__")
 
 
 async def test_connect_and_disconnect(
