@@ -63,7 +63,7 @@ automatically, or explicitly await `connect_async()` and `disconnect_async()`.
 | `get_multiple_async` | List of names: `temperature`, `battery`, `datetime`, `holiday1`-`holiday8`, `holidays`, `monday`-`sunday`, `weekdays`, `manual` | `dict` of results from the corresponding getters |
 | `discover_async` | Optional scan `timeout`, defaults to 5 seconds | List of matching `BLEDevice` objects |
 
-:warning: the device applies set values when the connection is closed, not directly after setting them
+:warning: the device applies set values when the connection is closed, not directly after setting them.
 
 ### Migrating from the synchronous client
 

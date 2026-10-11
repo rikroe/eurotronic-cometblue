@@ -184,15 +184,16 @@ class AsyncCometBlue:
         Transforms a time-string to the Comet Blue byte representation.
 
         :param value: time-string in format HH:mm
-        :returns int: the Comet Blue representation of the given time, or 0 if invalid
+        :returns int: the Comet Blue representation of the given time, or 0 for None
         :rtype: int
         """
         if value is None:
             return 0
 
-        split = value.split(":")
-        hour = int(split[0])
-        minutes = int(split[1])
+        try:
+            hour, minutes = (int(part) for part in value.split(":"))
+        except ValueError as ex:
+            raise ValueError(f"Invalid time string: {value}") from ex
 
         if hour not in range(0, 24) or minutes not in range(0, 60):
             raise ValueError(f"Invalid time string: {value}")
@@ -210,6 +211,8 @@ class AsyncCometBlue:
         :param value: bytearray retrieved from the device
         :return: dict containing the values
         """
+        if len(value) < 7:
+            raise InvalidByteValueError(f"Invalid temperature received: {value!r}")
         result = {}
         result["currentTemp"] = value[0] / 2
         result["manualTemp"] = value[1] / 2
@@ -255,8 +258,9 @@ class AsyncCometBlue:
             offset_value = values["tempOffset"]
             if not -5 <= values["tempOffset"] <= 5:
                 raise ValueError(f"Invalid tempOffset: {values['tempOffset']}")
+            offset_value *= 2
             if offset_value < 0:
-                offset_value = 256 + offset_value * 2
+                offset_value = 256 + offset_value
             new_value[4] = int(offset_value)
         else:
             new_value[4] = const.UNCHANGED_VALUE
@@ -273,6 +277,8 @@ class AsyncCometBlue:
         :param value: the retrieved bytearray
         :return: the transformed datetime
         """
+        if len(value) < 5:
+            raise InvalidByteValueError(f"Invalid datetime received: {value!r}")
         minute = value[0]
         hour = value[1]
         day = value[2]
@@ -307,17 +313,20 @@ class AsyncCometBlue:
         :param value: bytearray retrieved from the device
         :return: dict containing start1-4 and end1-4 times
         """
+        if len(value) < 8:
+            raise InvalidByteValueError(f"Invalid weekday received: {value!r}")
         result = {}
-        for i in range(1, 5):
+        for slot in range(1, 5):
+            index = (slot - 1) * 2
             # validate if start and end are in valid range
             # 144: 24:00, 255: not set
-            if 144 < max(value[int(i / 2) * 2], value[int(i / 2) * 2 + 1]) < 255:
+            if any(144 < entry < 255 for entry in (value[index], value[index + 1])):
                 raise InvalidByteValueError(f"Invalid weekday received: {value}")
-            start = self.__to_time_str(value[int(i / 2) * 2])
-            end = self.__to_time_str(value[int(i / 2) * 2 + 1])
+            start = self.__to_time_str(value[index])
+            end = self.__to_time_str(value[index + 1])
             if start is not None and end is not None and start != end:
-                result[str.format("start{}", i)] = start
-                result[str.format("end{}", i)] = end
+                result[str.format("start{}", slot)] = start
+                result[str.format("end{}", slot)] = end
         return result
 
     def __transform_weekday_request(self, values: dict) -> bytearray:
@@ -361,8 +370,11 @@ class AsyncCometBlue:
 
         :param values: bytearray retrieved from the device
         :return: dictionary containing start: datetime, end: datetime and temperature: float or empty if bytearray is
-        malformed
+        marked inactive
+        :raises InvalidByteValueError: if the response is truncated or contains invalid date fields
         """
+        if len(values) < 9:
+            raise InvalidByteValueError(f"Invalid holiday received: {values!r}")
 
         # validate if end is in past (128)
         # or is otherwise invalid (>128)
@@ -373,18 +385,20 @@ class AsyncCometBlue:
         if (
             values[3] not in range(0, 100)
             or values[2] not in range(1, 13)
-            or values[1] not in range(1, 31)
-            or not (values[0] in range(0, 25) or values[0] == 128)
+            or values[1] not in range(1, 32)
+            or not (values[0] in range(0, 24) or values[0] == 128)
             or values[7] not in range(0, 100)
             or values[6] not in range(1, 13)
-            or values[5] not in range(1, 31)
-            or values[4] not in range(0, 25)
+            or values[5] not in range(1, 32)
+            or values[4] not in range(0, 24)
         ):
             raise InvalidByteValueError(f"Invalid holiday received: {values}")
 
-        # If vacation mode has started, the hour values is 64, so we set start to None
-        start = None if values[0] == 128 else datetime(values[3] + 2000, values[2], values[1], values[0])
-        end = datetime(values[7] + 2000, values[6], values[5], values[4])
+        try:
+            start = None if values[0] == 128 else datetime(values[3] + 2000, values[2], values[1], values[0])
+            end = datetime(values[7] + 2000, values[6], values[5], values[4])
+        except ValueError as ex:
+            raise InvalidByteValueError(f"Invalid holiday received: {values!r}") from ex
         temperature = values[8] / 2
         result = {"start": start, "end": end, "temperature": temperature}
 
@@ -399,11 +413,13 @@ class AsyncCometBlue:
         :param values: dictionary containing start: datetime, end: datetime, temperature: float
         :return: bytearray to be transferred to the device
         """
-        if not set(values).issubset({"start", "end", "temperature"}):
+        if set(values) != {"start", "end", "temperature"}:
             raise ValueError("start, end and temperature are required")
 
         start: datetime = values["start"]
         end: datetime = values["end"]
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            raise ValueError("start and end must be datetime values")
         temperature = float(values["temperature"])
 
         new_value = bytearray(9)
@@ -458,11 +474,14 @@ class AsyncCometBlue:
 
         :return: dict of the retrieved values
         """
-        return {
-            "model": (await self.__read_value(const.CHARACTERISTIC_MODEL)).decode(),
-            "version": (await self.__read_value(const.CHARACTERISTIC_VERSION)).decode(),
-            "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode(),
-        }
+        try:
+            return {
+                "model": (await self.__read_value(const.CHARACTERISTIC_MODEL)).decode(),
+                "version": (await self.__read_value(const.CHARACTERISTIC_VERSION)).decode(),
+                "manufacturer": (await self.__read_value(const.CHARACTERISTIC_MANUFACTURER)).decode(),
+            }
+        except UnicodeDecodeError as ex:
+            raise InvalidByteValueError("Invalid device information received: invalid UTF-8") from ex
 
     async def get_temperature_async(self) -> dict:
         """Retrieves the temperature configurations from the device.
@@ -496,7 +515,10 @@ class AsyncCometBlue:
 
         :return: battery level in percent
         """
-        return (await self.__read_value(const.CHARACTERISTIC_BATTERY))[0]
+        value = await self.__read_value(const.CHARACTERISTIC_BATTERY)
+        if len(value) < 1:
+            raise InvalidByteValueError(f"Invalid battery received: {value!r}")
+        return value[0]
 
     async def get_datetime_async(self) -> datetime:
         """
@@ -582,6 +604,8 @@ class AsyncCometBlue:
         :return: True - if manual mode is enabled, False if not
         """
         mode = await self.__read_value(const.CHARACTERISTIC_SETTINGS)
+        if len(mode) < 1:
+            raise InvalidByteValueError(f"Invalid settings received: {mode!r}")
         return bool(mode[0] & 0x01)
 
     async def set_manual_mode_async(self, value: bool):

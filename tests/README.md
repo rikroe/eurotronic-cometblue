@@ -41,10 +41,13 @@ The central fixtures in [conftest.py](conftest.py) provide:
 
 The stateful mock supports all writable characteristics, preserves unchanged (`0x80`)
 fields and consecutive partial writes, and copies read responses to avoid accidental
-mutation of device state. See `test_writable_function_round_trip` in
+mutation of device state. For every writable characteristic, the mock assumes reads
+before disconnect echo that characteristic's last command without updating committed
+state. Disconnect applies pending updates and clears the echoes; after reconnect,
+reads return committed values.
+
+See `test_writable_function_round_trip` in
 [test_client.py](test_client.py) for examples using every setter.
 
-Known protocol and lifecycle defects remain unchanged;
-their regression tests belong with the corresponding fixes, not this passing baseline.
-In particular, multi-period weekday decoding and known temperature encoder edge cases
-are not yet covered by correctness tests.
+Protocol regressions in [test_codec.py](test_codec.py) exercise the existing client
+converters through the async API.

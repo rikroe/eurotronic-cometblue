@@ -179,7 +179,9 @@ async def test_empty_holiday(blue: AsyncCometBlue, gatt_client: MagicMock) -> No
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
+        ({}, [128, 128, 128, 128, 128, 128, 128]),
         ({"manualTemp": 8}, [128, 16, 128, 128, 128, 128, 128]),
+        ({"targetTempLow": 7.5, "targetTempHigh": 28.5}, [128, 128, 15, 57, 128, 128, 128]),
         (
             {"manualTemp": 20, "targetTempLow": 16, "targetTempHigh": 22, "tempOffset": -1.5},
             [128, 40, 32, 44, 253, 128, 128],
@@ -498,6 +500,8 @@ async def test_discovery_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 )
 async def test_writable_function_round_trip(
     writable_blue: AsyncCometBlue,
+    gatt_client: MagicMock,
+    device_values: dict[UUID, bytearray],
     *,
     setter: str,
     write_args: tuple[object, ...],
@@ -505,17 +509,46 @@ async def test_writable_function_round_trip(
     read_args: tuple[object, ...],
     expected: object,
 ) -> None:
-    """Read each setter's committed result after disconnecting and reconnecting the mock."""
+    """Echo each command without committing until disconnect, then read back the applied state."""
     write = getattr(writable_blue, setter)
     read = getattr(writable_blue, getter)
-    original = await read(*read_args)
+    original = {characteristic: bytearray(value) for characteristic, value in device_values.items()}
 
     assert await write(*write_args) is None
-    assert await read(*read_args) == original
+    assert device_values == original
+    gatt_client.write_gatt_char.assert_awaited()
+    for write_call in gatt_client.write_gatt_char.await_args_list:
+        characteristic, command = write_call.args
+        echoed = await writable_blue.client.read_gatt_char(characteristic)
+        assert echoed == command
+        echoed[0] ^= 0xFF
+        assert await writable_blue.client.read_gatt_char(characteristic) == command
+    assert device_values == original
+
     await writable_blue.disconnect_async()
     await writable_blue.connect_async()
 
+    for characteristic, value in device_values.items():
+        assert await writable_blue.client.read_gatt_char(characteristic) == value
     assert await read(*read_args) == expected
+
+
+async def test_temperature_write_echo_before_reconnect(writable_blue: AsyncCometBlue) -> None:
+    """Model the observed command echo and complete temperature readback after reconnect."""
+    original = await writable_blue.get_temperature_async()
+    await writable_blue.set_temperature_async({"manualTemp": 18.0})
+    expected_command = bytearray([128, 36, 128, 128, 128, 128, 128])
+    echoed = await writable_blue.client.read_gatt_char(const.CHARACTERISTIC_TEMPERATURE)
+    assert echoed == expected_command
+    echoed[1] = 0
+    assert await writable_blue.client.read_gatt_char(const.CHARACTERISTIC_TEMPERATURE) == expected_command
+
+    with pytest.raises(InvalidByteValueError, match="Invalid temperature"):
+        await writable_blue.get_temperature_async()
+
+    await writable_blue.disconnect_async()
+    await writable_blue.connect_async()
+    assert await writable_blue.get_temperature_async() == {**original, "manualTemp": 18.0}
 
 
 async def test_mock_preserves_consecutive_partial_writes(

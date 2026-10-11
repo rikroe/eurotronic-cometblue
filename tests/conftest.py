@@ -80,6 +80,7 @@ def writable_blue(
 ) -> AsyncCometBlue:
     """Mock writable characteristics, including partial updates and commit on disconnect."""
     pending: dict[UUID, bytearray] = {}
+    write_echoes: dict[UUID, bytearray] = {}
     writable = {
         const.CHARACTERISTIC_TEMPERATURE,
         const.CHARACTERISTIC_DATETIME,
@@ -89,11 +90,11 @@ def writable_blue(
     }
 
     def read(characteristic: UUID) -> bytearray:
-        """Return a copy of the committed characteristic bytes while connected."""
+        """Copy stored bytes, or echo the characteristic's last command until disconnect."""
         assert gatt_client.is_connected
         if characteristic not in device_values:
             raise BleakCharacteristicNotFoundError(characteristic)
-        return bytearray(device_values[characteristic])
+        return bytearray(write_echoes.get(characteristic, device_values[characteristic]))
 
     def write(characteristic: UUID, value: bytearray, *, response: bool) -> None:
         """Queue a permitted write, preserving fields marked as unchanged."""
@@ -103,6 +104,7 @@ def writable_blue(
             raise BleakCharacteristicNotFoundError(characteristic)
         current = pending.get(characteristic, device_values[characteristic])
         assert len(value) == len(current)
+        write_echoes[characteristic] = bytearray(value)
         if characteristic in (const.CHARACTERISTIC_TEMPERATURE, const.CHARACTERISTIC_SETTINGS):
             pending[characteristic] = bytearray(
                 previous if replacement == const.UNCHANGED_VALUE else replacement
@@ -115,6 +117,7 @@ def writable_blue(
         """Commit pending writes and mark the stateful mock as disconnected."""
         device_values.update(pending)
         pending.clear()
+        write_echoes.clear()
         gatt_client.is_connected = False
 
     def reconnect(*args: object, **kwargs: object) -> MagicMock:
