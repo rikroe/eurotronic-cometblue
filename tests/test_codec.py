@@ -207,8 +207,9 @@ async def test_invalid_holiday_fields_not_written(blue: AsyncCometBlue, gatt_cli
     else:
         values.pop(key)
 
+    method = "set_holiday_async"
     with pytest.raises(ValueError, match="required"):
-        await blue.set_holiday_async(1, values)
+        await getattr(blue, method)(1, values)
     gatt_client.write_gatt_char.assert_not_awaited()
 
 
@@ -219,8 +220,9 @@ async def test_invalid_holiday_date_type_not_written(blue: AsyncCometBlue, gatt_
     values: dict[str, object] = {"start": datetime(2027, 1, 1), "end": datetime(2027, 1, 2), "temperature": 16.5}
     values[key] = "2027-01-01"
 
+    method = "set_holiday_async"
     with pytest.raises(ValueError):
-        await blue.set_holiday_async(1, values)
+        await getattr(blue, method)(1, values)
     gatt_client.write_gatt_char.assert_not_awaited()
 
 
