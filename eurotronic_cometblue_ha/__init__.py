@@ -809,7 +809,7 @@ class AsyncCometBlue:
             self.__session_lock.release()
 
     @classmethod
-    async def discover_async(cls, timeout: float = 5) -> list[BLEDevice]:
+    async def discover_async(cls, timeout: float = 5) -> list[BLEDevice]:  # noqa: ASYNC109
         """
         Discovers available CometBlue devices.
 
