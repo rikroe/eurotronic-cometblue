@@ -29,7 +29,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Run pre-commit
-        run: uvx pre-commit run --all-files --show-diff-on-failure
+        run: uvx --with pre-commit-uv pre-commit run --all-files --show-diff-on-failure
 
       - name: Install package and dev dependencies
         run: uv sync --dev
