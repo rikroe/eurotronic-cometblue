@@ -115,13 +115,13 @@ results in
 
 ```python
 {
-    'currentTemp': 24.5,
-    'manualTemp': 16.0,
-    'targetTempLow': 16.0,
-    'targetTempHigh': 20.0,
-    'tempOffset': 0.0,
-    'windowOpen': True,
-    'windowOpenMinutes': 10
+    "currentTemp": 24.5,
+    "manualTemp": 16.0,
+    "targetTempLow": 16.0,
+    "targetTempHigh": 20.0,
+    "tempOffset": 0.0,
+    "windowOpen": True,
+    "windowOpenMinutes": 10,
 }
 ```
 
@@ -141,9 +141,7 @@ others.
 To use this schedule, make sure to disable manual mode.
 
 ```python
-blue.set_weekday(Weekday.MONDAY,
-                 {"start1": "06:00", "end1": "08:00",
-                  "start2": "16:00", "end2": "22:00"})
+blue.set_weekday(Weekday.MONDAY, {"start1": "06:00", "end1": "08:00", "start2": "16:00", "end2": "22:00"})
 blue.set_manual_mode(False)
 ```
 
@@ -152,9 +150,7 @@ blue.set_manual_mode(False)
 Setting a holiday (slot 2) from 26th December 2020 18:00 till 5th January 2021 14:00 and keep the temperature at 16.5 °C
 
 ```python
-blue.set_holiday(2, {"start": datetime(2020, 12, 26, 18),
-                     "end": datetime(2021, 1, 5, 14),
-                     "temperature": 16.5})
+blue.set_holiday(2, {"start": datetime(2020, 12, 26, 18), "end": datetime(2021, 1, 5, 14), "temperature": 16.5})
 ```
 
 ## Development and tests
