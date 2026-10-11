@@ -38,77 +38,64 @@ pip install eurotronic-cometblue-ha
 
 ## Usage
 
-Import the library and instantiate an object.
+The client is async-only. Use `AsyncCometBlue` with a `BLEDevice` returned by Bleak
+discovery and an optional `pin` (default `0`). Discovery timeouts belong to the scan,
+not the client constructor.
 
-Parameters are the device MAC-Address and the (optional) PIN. Depending on your connection quality you can specify a
-longer or shorter discovery duration.
+All device operations must be awaited. Use `async with` to connect and disconnect
+automatically, or explicitly await `connect_async()` and `disconnect_async()`.
 
-| Parameter | required? | default value |
-|-----------|:---------:|---------------|
-| mac       |    yes    | None          |
-| pin       |    no     | 0             |
-| timeout   |    no     | 2             |
-
-```python
-from eurotronic_cometblue_ha import CometBlue
-
-blue = CometBlue(mac="00:00:00:00:00:00", pin=123456, timeout=2)
-```
-
-or
-
-```python
-from eurotronic_cometblue_ha import AsyncCometBlue
-
-blue = AsyncCometBlue(mac="00:00:00:00:00:00", pin=123456, timeout=2)
-```
-
-for an asynchronous client.
-
-The following (synchronous) methods are available, for the asynchronous variants add `_async`:
-
-| Method            | Parameter                                                                                                                                                                                                                                                                                                     | Return Value                                                                                                                                                                            |
-|-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `get_temperature` | None                                                                                                                                                                                                                                                                                                          | `dict` with <ul><li>'currentTemp'</li><li>'manualTemp'</li><li>'targetTempLow'</li><li>'targetTempHigh'</li><li>'tempOffset'</li><li>'windowOpen'</li><li>'windowOpenMinutes'</li></ul> |
-| `set_temperature` | `dict` with the same values as `get_temperature`. Not all values have to be set.                                                                                                                                                                                                                              | None                                                                                                                                                                                    |
-| `get_battery`     | None                                                                                                                                                                                                                                                                                                          | `int` - Battery value in percent                                                                                                                                                        |
-| `get_datetime`    | None                                                                                                                                                                                                                                                                                                          | `datetime` - currently set date and time of the device. Used for schedules                                                                                                              |
-| `set_datetime`    | An optional `datetime`-object. The current date and time is used if the parameter is omitted.                                                                                                                                                                                                                 | None                                                                                                                                                                                    |
-| `get_weekday`     | A `Weekday`-Enum value eg. `Weekday.MONDAY`                                                                                                                                                                                                                                                                   | `dict` with `start#` and `end#` (# = 1-4) keys and the time as HH:mm formatted `str`s as values                                                                                         |
-| `set_weekday`     | A `Weekday`-Enum value eg. `Weekday.MONDAY` and a `dict` containing `start#` and `end#` (# = 1-4) as keys and HH:mm formatted `str`s as values                                                                                                                                                                | None                                                                                                                                                                                    |
-| `get_holiday`     | `int` 1-8 to select the holiday period                                                                                                                                                                                                                                                                        | `dict` with <ul><li>'start': `datetime`</li><li>'end': `datetime`</li><li>'temperature': `float`</li></ul>                                                                              |
-| `set_holiday`     | `dict` with the same values as `get_holiday`s return value.                                                                                                                                                                                                                                                   | None                                                                                                                                                                                    |
-| `get_manual_mode` | None                                                                                                                                                                                                                                                                                                          | `True` if manual mode is set. <br>`False` if the schedule is used                                                                                                                       |
-| `set_manual_mode` | `boolean` - `True` if manual mode should be used. `False` if the schedule should be used                                                                                                                                                                                                                      | None                                                                                                                                                                                    |
-| `get_multiple`    | Retrieves multiple values specified in a `list`. Valid values are: <ul><li>'temperature'</li><li>'battery'</li><li>'datetime'</li><li>'holiday#' # = 1-8 or</li><li>'holidays' (retrieves holiday1-8)</li><li>'monday'</li><li>'tuesday'</li><li>etc...</li><li>'weekdays' (retrieves all weekdays)</li></ul> | The values as a `dict` in the format defined by the appropriate methods                                                                                                                 |
-| `discover`        | timeout: `int`, timeout used for discovery                                                                                                                                                                                                                                                                    | MAC-addresses of all discovery Comet Blue devices                                                                                                                                       |
+| Method | Parameters | Return Value |
+|--------|------------|--------------|
+| `get_device_info_async` | None | `dict` with `model`, `version`, `manufacturer` |
+| `get_temperature_async` | None | `dict` with `currentTemp`, `manualTemp`, `targetTempLow`, `targetTempHigh`, `tempOffset`, `windowOpen`, `windowOpenMinutes` |
+| `set_temperature_async` | `dict` containing any of `manualTemp`, `targetTempLow`, `targetTempHigh`, `tempOffset` | None |
+| `get_battery_async` | None | Battery percentage as `int` |
+| `get_datetime_async` | None | Device-local `datetime`, used for schedules |
+| `set_datetime_async` | Optional `datetime`, defaults to now | None |
+| `get_weekday_async` | `Weekday`, e.g. `Weekday.MONDAY` | `dict` with `start#` and `end#` keys (# = 1-4), times as `HH:mm` strings |
+| `set_weekday_async` | `Weekday` and schedule `dict` | None |
+| `set_weekdays_async` | `dict` mapping weekday names (e.g. `"monday"`) to schedule dictionaries | None |
+| `get_holiday_async` | Slot number (1-8) | `dict` with `start`, `end`, `temperature`; empty for an inactive slot |
+| `set_holiday_async` | Slot number (1-8) and `dict` with `start`, `end`, `temperature` | None |
+| `get_manual_mode_async` | None | `True` for manual mode, `False` for scheduled mode |
+| `set_manual_mode_async` | `bool` selecting manual mode | None |
+| `get_multiple_async` | List of names: `temperature`, `battery`, `datetime`, `holiday1`-`holiday8`, `holidays`, `monday`-`sunday`, `weekdays`, `manual` | `dict` of results from the corresponding getters |
+| `discover_async` | Optional scan `timeout`, defaults to 5 seconds | List of matching `BLEDevice` objects |
 
 :warning: the device applies set values when the connection is closed, not directly after setting them
 
-## Examples
+### Migrating from the synchronous client
 
-Use `CometBlueAsync` and `[method_name]_async` for asynchronous handling.
+The synchronous `CometBlue` class has been removed. Replace it with `AsyncCometBlue`,
+use `async with` instead of `with`, and await the existing `*_async` methods.
+Replace `CometBlue.discover()` with `await AsyncCometBlue.discover_async()`; discovery
+returns `BLEDevice` objects, whose `.address` attribute provides the address.
+The library no longer creates or runs event loops. In an async application, use its
+existing loop; a standalone script can call `asyncio.run(main())` as shown below.
+
+## Examples
 
 ### Instantiating and retrieving the current temperature
 
 ```python
-from eurotronic_cometblue_ha import CometBlue
+import asyncio
 
-blue = CometBlue("00:00:00:00:00:00", 123456)
-blue.connect()
-temp = blue.get_temperature()
-print(temp)
-blue.disconnect()
-```
+from bleak import BleakScanner
 
-or
+from eurotronic_cometblue_ha import AsyncCometBlue
 
-```python
-from eurotronic_cometblue_ha import CometBlue
 
-with CometBlue("00:00:00:00:00:00", 123456) as blue:
-    temp = blue.get_temperature()
-    print(temp)
+async def main():
+    device = await BleakScanner.find_device_by_address("00:00:00:00:00:00", timeout=10)
+    if device is None:
+        raise RuntimeError("Comet Blue device not found")
+    async with AsyncCometBlue(device=device, pin=123456) as blue:
+        temp = await blue.get_temperature_async()
+        print(temp)
+
+
+asyncio.run(main())
 ```
 
 results in
@@ -138,11 +125,15 @@ All unmentioned periods (periods 3 and 4) will be disabled (start and end set to
 Set periods will be consolidated, meaning setting only period 3 via this method will write period 1 and disable the
 others.
 
-To use this schedule, make sure to disable manual mode.
+To use this schedule, make sure to disable manual mode. Run the following inside
+an async function while `blue` is connected (for example, inside the `async with`
+block above).
 
 ```python
-blue.set_weekday(Weekday.MONDAY, {"start1": "06:00", "end1": "08:00", "start2": "16:00", "end2": "22:00"})
-blue.set_manual_mode(False)
+from eurotronic_cometblue_ha import Weekday
+
+await blue.set_weekday_async(Weekday.MONDAY, {"start1": "06:00", "end1": "08:00", "start2": "16:00", "end2": "22:00"})
+await blue.set_manual_mode_async(False)
 ```
 
 ### Setting a holiday
@@ -150,7 +141,11 @@ blue.set_manual_mode(False)
 Setting a holiday (slot 2) from 26th December 2020 18:00 till 5th January 2021 14:00 and keep the temperature at 16.5 °C
 
 ```python
-blue.set_holiday(2, {"start": datetime(2020, 12, 26, 18), "end": datetime(2021, 1, 5, 14), "temperature": 16.5})
+from datetime import datetime
+
+await blue.set_holiday_async(
+    2, {"start": datetime(2020, 12, 26, 18), "end": datetime(2021, 1, 5, 14), "temperature": 16.5}
+)
 ```
 
 ## Development and tests
