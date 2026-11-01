@@ -431,11 +431,15 @@ class AsyncCometBlue:
 
         :param values: bytearray retrieved from the device
         :return: dictionary containing start: datetime, end: datetime and temperature: float or empty if bytearray is
-        marked inactive
+        marked inactive or was never set
         :raises InvalidByteValueError: if the response is truncated or contains invalid date fields
         """
         if len(values) < 9:
             raise InvalidByteValueError(f"Invalid holiday received: {values!r}")
+
+        # slot was never set (e.g. factory state of SilverCrest RT2000BT)
+        if not any(values[:9]):
+            return {}
 
         # validate if end is in past (128)
         # or is otherwise invalid (>128)
