@@ -518,6 +518,13 @@ async def test_empty_holiday(blue: AsyncCometBlue, gatt_client: MagicMock) -> No
     assert blue.raw[const.CHARACTERISTIC_HOLIDAY_1] == bytes([0, 0, 0, 0, 128, 0, 0, 0, 0])
 
 
+async def test_unset_holiday(blue: AsyncCometBlue, gatt_client: MagicMock) -> None:
+    """Return an empty mapping for a slot that was never set (all bytes zero)."""
+    gatt_client.read_gatt_char.return_value = bytearray(9)
+
+    assert await blue.get_holiday_async(1) == {}
+
+
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
